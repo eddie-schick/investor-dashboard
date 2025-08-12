@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, AreaChart, Area } from 'recharts'
 import { formatCurrency } from '@/utils/formatters'
+import { getMonthlyValue, computeActiveCustomersWithOnboarding } from '@/utils/ramping'
 
 const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
   const [granularity, setGranularity] = useState('total') // 'monthly' | 'quarterly' | 'yearly' | 'total'
@@ -32,36 +33,50 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
     return result
   }, [])
 
-  // Compute monthly revenue streams aligned with IncomeStatementTab and assumptions
+  // Compute monthly revenue streams exactly as in IncomeStatementTab for reconciliation
   const monthlyData = useMemo(() => {
-    const data = []
     const implementationProjects = []
-    months.forEach((period, index) => {
-      // Implementation schedule from assumptions.implementationPlan (defaults to 0)
+    return months.map((period, index) => {
+      // Implementation revenue
       let implementationRevenue = 0
-      const implementationsThisMonth = (assumptions.implementationPlan?.[index] ?? 0)
-      if (implementationsThisMonth > 0) {
-        implementationRevenue = implementationsThisMonth * (assumptions.implementationPrice || 500000)
+      const countThisMonth = (assumptions.implementationPlan?.[index] ?? 0)
+      if (countThisMonth > 0) {
+        implementationRevenue = countThisMonth * (assumptions.implementationPrice || 500000)
         implementationProjects.push({ startMonth: index, revenue: implementationRevenue })
       }
 
+      // Customers with optional onboarding ramp
       const monthsSinceStart = index
-      const growthMultiplier = 1 + (monthsSinceStart * 0.015)
-      const baseCustomers = Math.floor((assumptions.marketPenetration / 100) * (baseMarketData.totalDealerships || 3816) * growthMultiplier)
-      const monthlyChurnRate = (assumptions.annualChurnRate / 100) / 12
-      const retentionRate = Math.pow(1 - monthlyChurnRate, monthsSinceStart)
-      const customers = Math.floor(baseCustomers * retentionRate)
+      const onboardingCustomers = computeActiveCustomersWithOnboarding(assumptions, index, 3816)
+      let customers
+      if (typeof onboardingCustomers === 'number') {
+        customers = onboardingCustomers
+      } else {
+        const growthMultiplier = 1 + (monthsSinceStart * 0.015)
+        const baseCustomers = Math.floor((assumptions.marketPenetration / 100) * 3816 * growthMultiplier)
+        const monthlyChurnRate = (assumptions.annualChurnRate / 100) / 12
+        const retentionRate = Math.pow(1 - monthlyChurnRate, monthsSinceStart)
+        customers = Math.floor(baseCustomers * retentionRate)
+      }
 
-      const subscriptionRevenue = customers * (assumptions.saasBasePricing || 0)
+      // Subscription (SaaS + Websites)
+      const saasPriceThisMonth = getMonthlyValue(assumptions, 'saasBasePricing', index) || 0
+      const websitePriceThisMonth = getMonthlyValue(assumptions, 'dealerWebsiteCost', index) || 0
+      const subscriptionRevenue = customers * (saasPriceThisMonth + websitePriceThisMonth)
+
+      // Transactional
       const seasonalFactor = [0.8, 0.9, 1.0, 1.1, 1.2, 1.0, 0.9, 0.8, 0.9, 1.1, 1.2, 1.1][period.month]
-      const avgTruckPrice = assumptions.avgTransactionPrice || baseMarketData.avgTruckPrice
-      const transactionsPerCustomer = (assumptions.transactionsPerCustomer || 168) / 12 * seasonalFactor
-      const transactionRevenue = customers * transactionsPerCustomer * avgTruckPrice * ((assumptions.transactionFeeRate || 0) / 100)
+      const avgTruckPrice = getMonthlyValue(assumptions, 'avgTransactionPrice', index) || 158993
+      const tpcYear = getMonthlyValue(assumptions, 'transactionsPerCustomer', index) || 168
+      const feeRate = getMonthlyValue(assumptions, 'transactionFeeRate', index) || 0
+      const transactionsPerCustomer = (tpcYear / 12) * seasonalFactor
+      const transactionRevenue = customers * transactionsPerCustomer * avgTruckPrice * (feeRate / 100)
+      const transactionsCount = customers * transactionsPerCustomer
 
-      // Maintenance after delay
+      // Maintenance (percentage of past implementations, after delay)
       let maintenanceRevenue = 0
-      const maintenancePercentage = assumptions.maintenancePercentage || 18
-      const maintenanceStartMonth = assumptions.maintenanceStartMonth || 3
+      const maintenancePercentage = getMonthlyValue(assumptions, 'maintenancePercentage', index) || 18
+      const maintenanceStartMonth = Math.round(getMonthlyValue(assumptions, 'maintenanceStartMonth', index) || 3)
       implementationProjects.forEach((p) => {
         const monthsSinceImplementation = index - p.startMonth
         if (monthsSinceImplementation >= maintenanceStartMonth) {
@@ -69,25 +84,21 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
         }
       })
 
-      const websites = customers * (assumptions.dealerWebsiteCost || 0)
-      const leadGen = customers * (500 / 12) * (assumptions.leadGenCostPerLead || 0)
+      // Total revenue matches IncomeStatement (subscription + transactional + implementation + maintenance)
+      const totalRevenue = subscriptionRevenue + transactionRevenue + implementationRevenue + maintenanceRevenue
 
-      const totalRevenue = subscriptionRevenue + transactionRevenue + implementationRevenue + maintenanceRevenue + websites + leadGen
-
-      data.push({
+      return {
         period,
         customers,
         subscriptionRevenue,
         transactionRevenue,
         implementationRevenue,
         maintenanceRevenue,
-        websiteRevenue: websites,
-        leadGenRevenue: leadGen,
+        transactionsCount,
         totalRevenue,
-      })
+      }
     })
-    return data
-  }, [months, assumptions, baseMarketData])
+  }, [months, assumptions])
 
   const quarterlyData = useMemo(() => {
     const quarters = []
@@ -105,8 +116,7 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
           transactionRevenue: group.reduce((s, m) => s + m.transactionRevenue, 0),
           implementationRevenue: group.reduce((s, m) => s + m.implementationRevenue, 0),
           maintenanceRevenue: group.reduce((s, m) => s + m.maintenanceRevenue, 0),
-          websiteRevenue: group.reduce((s, m) => s + m.websiteRevenue, 0),
-          leadGenRevenue: group.reduce((s, m) => s + m.leadGenRevenue, 0),
+          transactionsCount: group.reduce((s, m) => s + m.transactionsCount, 0),
           totalRevenue: group.reduce((s, m) => s + m.totalRevenue, 0),
         })
       }
@@ -128,8 +138,7 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
           transactionRevenue: 0,
           implementationRevenue: 0,
           maintenanceRevenue: 0,
-          websiteRevenue: 0,
-          leadGenRevenue: 0,
+          transactionsCount: 0,
           totalRevenue: 0,
         }
       }
@@ -140,8 +149,7 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
       row.transactionRevenue += m.transactionRevenue
       row.implementationRevenue += m.implementationRevenue
       row.maintenanceRevenue += m.maintenanceRevenue
-      row.websiteRevenue += m.websiteRevenue
-      row.leadGenRevenue += m.leadGenRevenue
+      row.transactionsCount += m.transactionsCount
       row.totalRevenue += m.totalRevenue
     })
     return Object.values(years).map((r) => ({
@@ -152,8 +160,7 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
       transactionRevenue: r.transactionRevenue,
       implementationRevenue: r.implementationRevenue,
       maintenanceRevenue: r.maintenanceRevenue,
-      websiteRevenue: r.websiteRevenue,
-      leadGenRevenue: r.leadGenRevenue,
+      transactionsCount: r.transactionsCount,
       totalRevenue: r.totalRevenue,
     }))
   }, [monthlyData])
@@ -165,10 +172,9 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
       transactionRevenue: s.transactionRevenue + m.transactionRevenue,
       implementationRevenue: s.implementationRevenue + m.implementationRevenue,
       maintenanceRevenue: s.maintenanceRevenue + m.maintenanceRevenue,
-      websiteRevenue: s.websiteRevenue + m.websiteRevenue,
-      leadGenRevenue: s.leadGenRevenue + m.leadGenRevenue,
+      transactionsCount: s.transactionsCount + m.transactionsCount,
       totalRevenue: s.totalRevenue + m.totalRevenue,
-    }), { customers: 0, subscriptionRevenue: 0, transactionRevenue: 0, implementationRevenue: 0, maintenanceRevenue: 0, websiteRevenue: 0, leadGenRevenue: 0, totalRevenue: 0 })
+    }), { customers: 0, subscriptionRevenue: 0, transactionRevenue: 0, implementationRevenue: 0, maintenanceRevenue: 0, transactionsCount: 0, totalRevenue: 0 })
     return { key: 'total', label: 'Total', ...agg }
   }, [monthlyData])
 
@@ -209,8 +215,6 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
       label: m.period.label,
       saas: m.subscriptionRevenue,
       tx: m.transactionRevenue,
-      websites: m.websiteRevenue,
-      leadgen: m.leadGenRevenue,
       impl: m.implementationRevenue,
       maint: m.maintenanceRevenue,
     }))
@@ -218,17 +222,14 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
   const totalCustomers = marketOpportunity.targetDealerships || 0
   const marketplaceUsers = marketOpportunity.marketplaceUsers || 0
 
-  const annualSaasRevenue = (selectedData?.subscriptionRevenue ?? marketOpportunity.annualSaasRevenue) || 0
-  const transactionRevenue = (selectedData?.transactionRevenue ?? marketOpportunity.transactionFeeRevenue) || 0
-  const websiteRevenue = (selectedData?.websiteRevenue ?? marketOpportunity.websiteRevenue) || 0
-  const leadGenRevenue = (selectedData?.leadGenRevenue ?? marketOpportunity.leadGenRevenue) || 0
-  const totalAnnualRevenue = (selectedData?.totalRevenue ?? marketOpportunity.totalRevenue) || 0
+  const annualSaasRevenue = selectedData?.subscriptionRevenue || 0
+  const transactionRevenue = selectedData?.transactionRevenue || 0
+  const totalAnnualRevenue = selectedData?.totalRevenue || 0
+  const annualTransactions = Math.round(selectedData?.transactionsCount || 0)
 
   const revenueBreakdown = [
     { name: 'SaaS', value: annualSaasRevenue, color: '#8884d8' },
-    { name: 'Transactions', value: transactionRevenue, color: '#82ca9d' },
-    { name: 'Websites', value: websiteRevenue, color: '#ffc658' },
-    { name: 'Lead Gen', value: leadGenRevenue, color: '#ff7300' },
+    { name: 'Transactional', value: transactionRevenue, color: '#82ca9d' },
   ]
 
   const cac = assumptions.customerAcquisitionCost || 0
@@ -238,10 +239,95 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
   const ltv = marketOpportunity.customerLifetimeValue || 0
   const ltvcac = marketOpportunity.ltvcacRatio || 0
 
-  const totalTransactions = marketOpportunity.totalTransactions || 0
   const avgTransactionPrice = assumptions.avgTransactionPrice || baseMarketData.avgTruckPrice
 
   const avgRevenuePerCustomer = totalCustomers > 0 ? totalAnnualRevenue / totalCustomers : 0
+
+  // Cash balance series (Aug 2025–Dec 2027) using same formulas as IncomeStatementTab
+  const cashBalanceSeries = useMemo(() => {
+    let cumulativeCashBalance = 675000
+    const investmentAmount = 1500000
+    const investmentMonth = '2025-10'
+    const implementationProjects = []
+    return months.map((period, index) => {
+      // Implementation revenue and project tracking
+      let implementationRevenue = 0
+      const countThisMonth = (assumptions.implementationPlan?.[index] ?? 0)
+      if (countThisMonth > 0) {
+        implementationRevenue = countThisMonth * (assumptions.implementationPrice || 500000)
+        implementationProjects.push({ startMonth: index, revenue: implementationRevenue })
+      }
+
+      // Customers
+      const monthsSinceStart = index
+      const onboardingCustomers = computeActiveCustomersWithOnboarding(assumptions, index, 3816)
+      let customers
+      if (typeof onboardingCustomers === 'number') {
+        customers = onboardingCustomers
+      } else {
+        const growthMultiplier = 1 + (monthsSinceStart * 0.015)
+        const baseCustomers = Math.floor((assumptions.marketPenetration / 100) * 3816 * growthMultiplier)
+        const monthlyChurnRate = (assumptions.annualChurnRate / 100) / 12
+        const retentionRate = Math.pow(1 - monthlyChurnRate, monthsSinceStart)
+        customers = Math.floor(baseCustomers * retentionRate)
+      }
+
+      // Revenue components
+      const saasPriceThisMonth = getMonthlyValue(assumptions, 'saasBasePricing', index) || 0
+      const websitePriceThisMonth = getMonthlyValue(assumptions, 'dealerWebsiteCost', index) || 0
+      const subscriptionRevenue = customers * (saasPriceThisMonth + websitePriceThisMonth)
+      const seasonalFactor = [0.8, 0.9, 1.0, 1.1, 1.2, 1.0, 0.9, 0.8, 0.9, 1.1, 1.2, 1.1][period.month]
+      const avgTruckPrice = getMonthlyValue(assumptions, 'avgTransactionPrice', index) || 158993
+      const tpcYear = getMonthlyValue(assumptions, 'transactionsPerCustomer', index) || 168
+      const feeRate = getMonthlyValue(assumptions, 'transactionFeeRate', index) || 0
+      const transactionsPerCustomer = (tpcYear / 12) * seasonalFactor
+      const transactionRevenue = customers * transactionsPerCustomer * avgTruckPrice * (feeRate / 100)
+
+      let maintenanceRevenue = 0
+      const maintenancePercentage = getMonthlyValue(assumptions, 'maintenancePercentage', index) || 18
+      const maintenanceStartMonth = Math.round(getMonthlyValue(assumptions, 'maintenanceStartMonth', index) || 3)
+      implementationProjects.forEach((p) => {
+        const monthsSinceImplementation = index - p.startMonth
+        if (monthsSinceImplementation >= maintenanceStartMonth) {
+          maintenanceRevenue += (p.revenue * (maintenancePercentage / 100)) / 12
+        }
+      })
+
+      const totalRevenue = subscriptionRevenue + transactionRevenue + implementationRevenue + maintenanceRevenue
+
+      // Expenses (match IncomeStatement defaults)
+      const expensePayroll = getMonthlyValue(assumptions, 'expensePayroll', index) || 110000
+      const expenseContractors = getMonthlyValue(assumptions, 'expenseContractors', index) || 70000
+      const contractorSpikePct = getMonthlyValue(assumptions, 'contractorsSpikePercentage', index) || 40
+      const contractorSpike = implementationRevenue > 0 ? implementationRevenue * (contractorSpikePct / 100) : 0
+      const expenseTravelMarketing = getMonthlyValue(assumptions, 'expenseTravelMarketing', index) || 30000
+      const expenseLicenseFees = getMonthlyValue(assumptions, 'expenseLicenseFees', index) || 15000
+      const expenseSharedServices = getMonthlyValue(assumptions, 'expenseSharedServices', index) || 18000
+      const expenseLegal = getMonthlyValue(assumptions, 'expenseLegal', index) || 10000
+      const expenseCompanyVehicle = getMonthlyValue(assumptions, 'expenseCompanyVehicle', index) || 6000
+      const expenseInsurance = getMonthlyValue(assumptions, 'expenseInsurance', index) || 5000
+      const expenseContingencies = getMonthlyValue(assumptions, 'expenseContingencies', index) || 5000
+      const expenseConsultantAudit = getMonthlyValue(assumptions, 'expenseConsultantAudit', index) || 2000
+
+      const totalExpenses =
+        expensePayroll +
+        expenseContractors +
+        contractorSpike +
+        expenseTravelMarketing +
+        expenseLicenseFees +
+        expenseSharedServices +
+        expenseLegal +
+        expenseCompanyVehicle +
+        expenseInsurance +
+        expenseContingencies +
+        expenseConsultantAudit
+
+      const netIncome = totalRevenue - totalExpenses
+      const investmentInflow = period.key === investmentMonth ? investmentAmount : 0
+      cumulativeCashBalance += netIncome + investmentInflow
+      return { label: period.label, cash: cumulativeCashBalance }
+    })
+  }, [months, assumptions])
 
   return (
     <div className="space-y-6">
@@ -281,8 +367,8 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
           <CardContent><div className="text-2xl font-bold">{totalCustomers.toLocaleString()}</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Marketplace Users</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold">{marketplaceUsers.toLocaleString()}</div></CardContent>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Annual Transactions</CardTitle></CardHeader>
+          <CardContent><div className="text-2xl font-bold">{annualTransactions.toLocaleString()}</div></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm">ARR (SaaS)</CardTitle></CardHeader>
@@ -305,19 +391,17 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>Revenue by Stream</CardTitle>
-            <CardDescription>{granularity === 'total' ? 'Total period' : periodOptions.find(p => p.key === selectedKey)?.label} revenue mix</CardDescription>
+            <CardTitle>Monthly Cash Balance</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie data={revenueBreakdown} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
-                  {revenueBreakdown.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value) => formatCurrency(value)} />
-              </PieChart>
+              <BarChart data={cashBalanceSeries}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="label" hide={true} />
+                <YAxis />
+                <Tooltip formatter={(v) => formatCurrency(Number(v))} />
+                <Bar dataKey="cash" fill="#60a5fa" name="Cash Balance" />
+              </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
@@ -341,8 +425,8 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
                   <TableCell className="font-medium">{formatCurrency(avgRevenuePerCustomer)}</TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell>Total Transactions (annual)</TableCell>
-                  <TableCell className="font-medium">{totalTransactions.toLocaleString()}</TableCell>
+                  <TableCell>Annual Transactions</TableCell>
+                  <TableCell className="font-medium">{annualTransactions.toLocaleString()}</TableCell>
                 </TableRow>
                 <TableRow>
                   <TableCell>Avg Transaction Price</TableCell>
@@ -366,7 +450,6 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
         <Card>
           <CardHeader>
             <CardTitle>Cumulative Dealers Over Time</CardTitle>
-            <CardDescription>Maximum active customers month by month</CardDescription>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
@@ -384,22 +467,21 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
         <Card>
           <CardHeader>
             <CardTitle>Revenue by Stream (Monthly)</CardTitle>
-            <CardDescription>Stacked monthly revenue growth</CardDescription>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={revenueByStreamSeries}>
+              <BarChart data={revenueByStreamSeries}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="label" hide={true} />
                 <YAxis />
                 <Tooltip formatter={(v) => formatCurrency(Number(v))} />
-                <Area type="monotone" dataKey="saas" stackId="1" stroke="#8884d8" fill="#8884d8" fillOpacity={0.6} name="SaaS" />
-                <Area type="monotone" dataKey="tx" stackId="1" stroke="#82ca9d" fill="#82ca9d" fillOpacity={0.6} name="Transactions" />
-                <Area type="monotone" dataKey="websites" stackId="1" stroke="#ffc658" fill="#ffc658" fillOpacity={0.6} name="Websites" />
-                <Area type="monotone" dataKey="leadgen" stackId="1" stroke="#ff7300" fill="#ff7300" fillOpacity={0.6} name="Lead Gen" />
-                <Area type="monotone" dataKey="impl" stackId="1" stroke="#6b7280" fill="#6b7280" fillOpacity={0.5} name="Implementation" />
-                <Area type="monotone" dataKey="maint" stackId="1" stroke="#60a5fa" fill="#60a5fa" fillOpacity={0.5} name="Maintenance" />
-              </AreaChart>
+                <Bar dataKey="saas" stackId="1" fill="#8884d8" name="SaaS" />
+                <Bar dataKey="tx" stackId="1" fill="#82ca9d" name="Transactional" />
+                <Bar dataKey="websites" stackId="1" fill="#ffc658" name="Websites" />
+                <Bar dataKey="leadgen" stackId="1" fill="#ff7300" name="Lead Gen" />
+                <Bar dataKey="impl" stackId="1" fill="#6b7280" name="Implementation" />
+                <Bar dataKey="maint" stackId="1" fill="#60a5fa" name="Maintenance" />
+              </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
