@@ -1,0 +1,6 @@
+export { default as MarketOverviewTab } from './MarketOverviewTab'
+export { default as AssumptionsTab } from './AssumptionsTab'
+export { default as RevenueOpportunityTab } from './RevenueOpportunityTab'
+export { default as GrowthScenariosTab } from './GrowthScenariosTab'
+export { default as IncomeStatementTab } from './IncomeStatementTab'
+export { default as KPITab } from './KPITab'

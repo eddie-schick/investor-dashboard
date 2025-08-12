@@ -87,7 +87,7 @@ investor-dashboard/
 - Department revenue analysis
 - Critical pain points and opportunities
 
-### 2. Adjust Assumptions
+### 2. Model Assumptions
 - Interactive sliders and inputs
 - Real-time calculation updates
 - Customer metrics (LTV, CAC, churn)
