@@ -7,7 +7,7 @@ import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, 
 import { formatCurrency, formatCurrencyCompact } from '@/utils/formatters'
 import { getMonthlyValue, computeActiveCustomersWithOnboarding } from '@/utils/ramping'
 
-const KPITab = ({ assumptions, marketOpportunity, baseMarketData, initialCash = 675000, investmentAmount = 1500000, investmentMonth = '2025-10' }) => {
+const KPITab = ({ assumptions, marketOpportunity, baseMarketData, initialCash = 675000, investmentAmount = 500000, investmentMonth = '2025-10' }) => {
   const [granularity, setGranularity] = useState('total') // 'monthly' | 'quarterly' | 'yearly' | 'total'
   const [selectedKey, setSelectedKey] = useState('total')
 
@@ -342,7 +342,7 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData, initialCash = 
 
       // Expenses (match IncomeStatement defaults)
       const expensePayroll = getMonthlyValue(assumptions, 'expensePayroll', index) || 110000
-      const expenseContractors = getMonthlyValue(assumptions, 'expenseContractors', index) || 70000
+      const expenseContractors = getMonthlyValue(assumptions, 'expenseContractors', index) || 50000
       const contractorSpikePct = getMonthlyValue(assumptions, 'contractorsSpikePercentage', index) ?? 0
       const contractorSpike = implementationRevenue > 0 ? implementationRevenue * (contractorSpikePct / 100) : 0
       const expenseTravelMarketing = getMonthlyValue(assumptions, 'expenseTravelMarketing', index) || 30000

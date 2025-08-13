@@ -11,6 +11,7 @@ import { KPITab } from '@/components/dashboard'
 import './App.css'
 
 function App() {
+  const [activeTab, setActiveTab] = useState('overview')
   // Market Data (Source: 2024 NADA/ATD Data)
   const baseMarketData = {
     totalDealerships: 3798,
@@ -44,12 +45,17 @@ function App() {
 
   // Build default onboarding plan using the same ramp logic as the popout
   const mapPaceToExponent = (pace) => {
-    if (pace >= 10.5) return 0
-    const clamped = Math.min(Math.max(pace, 0.5), 10)
-    return Math.max(0.5, Math.min(8, ((10.5 - clamped) / 10) * 8))
+    if (pace >= 20.5) return 0
+    const clamped = Math.min(Math.max(pace, 0.5), 20)
+    if (clamped <= 10) {
+      const inner = Math.min(Math.max(clamped, 0.5), 10)
+      return Math.max(0.5, Math.min(8, ((10.5 - inner) / 10) * 8))
+    }
+    const fraction = (20.5 - clamped) / (20.5 - 10)
+    return Math.max(0, 0.5 * fraction)
   }
 
-  const buildDefaultOnboardingRampPlan = (penetrationPercent, pace = 9, startIndex = 1) => {
+  const buildDefaultOnboardingRampPlan = (penetrationPercent, pace = 10, startIndex = 1) => {
     const months = 29 // Aug-Dec 2025 (5) + 2026 (12) + 2027 (12)
     const totalDealers = baseMarketData.totalDealerships || 3816
     const targetDealers = Math.round(totalDealers * (penetrationPercent / 100))
@@ -123,11 +129,11 @@ function App() {
     },            // { [assumptionKey]: { enabled: boolean, monthlyPercent: number, startMonth?: number } }
     // Optional dealer onboarding plan
     useOnboardingPlan: true,
-    onboardingPlan: buildDefaultOnboardingRampPlan(15), // customers added per month (9x pace, start Sep 2025)
+    onboardingPlan: buildDefaultOnboardingRampPlan(15), // customers added per month (10x pace, start Sep 2025)
     
     // Expense assumptions (monthly $ amounts)
     expensePayroll: 110000,
-    expenseContractors: 70000,
+    expenseContractors: 50000,
     expenseTravelMarketing: 30000,
     expenseLicenseFees: 15000,
     expenseSharedServices: 18000,
@@ -145,14 +151,14 @@ function App() {
       return {
         initialCash: saved.initialCash ?? 675000,
         initialCashDate: saved.initialCashDate ?? '2025-07-31',
-        investmentAmount: saved.investmentAmount ?? 1500000,
+        investmentAmount: saved.investmentAmount ?? 500000,
         investmentMonth: saved.investmentMonth ?? '2025-10'
       }
     } catch {
       return {
         initialCash: 675000,
         initialCashDate: '2025-07-31',
-        investmentAmount: 1500000,
+        investmentAmount: 500000,
         investmentMonth: '2025-10'
       }
     }
@@ -278,14 +284,14 @@ function App() {
           <p className="text-xl text-muted-foreground">Dealer Market Opportunity Analysis</p>
         </div>
 
-        <Tabs defaultValue="overview" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="overview">Market Overview</TabsTrigger>
             <TabsTrigger value="opportunity">Revenue Opportunity</TabsTrigger>
-            <TabsTrigger value="scenarios">Growth Scenarios</TabsTrigger>
             <TabsTrigger value="income">Income Statement</TabsTrigger>
-            <TabsTrigger value="assumptions">Model Assumptions</TabsTrigger>
             <TabsTrigger value="kpi">Key Metrics</TabsTrigger>
+            <TabsTrigger value="assumptions">Model Assumptions</TabsTrigger>
+            <TabsTrigger value="scenarios">Growth Scenarios</TabsTrigger>
           </TabsList>
 
           {/* Market Overview Tab */}
@@ -303,16 +309,6 @@ function App() {
             />
           </TabsContent>
 
-          {/* Growth Scenarios Tab */}
-          <TabsContent value="scenarios">
-            <GrowthScenariosTab 
-              penetrationScenarios={penetrationScenarios} 
-              assumptions={assumptions}
-              baseMarketData={baseMarketData}
-              marketOpportunity={marketOpportunity}
-            />
-          </TabsContent>
-          
           {/* Income Statement Tab */}
           <TabsContent value="income">
             <IncomeStatementTab 
@@ -328,16 +324,6 @@ function App() {
             />
           </TabsContent>
 
-          {/* Assumptions Tab */}
-          <TabsContent value="assumptions">
-            <AssumptionsTab 
-              assumptions={assumptions} 
-              updateAssumption={updateAssumption} 
-              marketOpportunity={marketOpportunity} 
-              baseMarketData={baseMarketData} 
-            />
-          </TabsContent>
-
           {/* Key Metrics Tab */}
           <TabsContent value="kpi">
             <KPITab 
@@ -349,12 +335,34 @@ function App() {
               investmentMonth={cashSettings.investmentMonth}
             />
           </TabsContent>
+
+          {/* Assumptions Tab */}
+          <TabsContent value="assumptions">
+            <AssumptionsTab 
+              assumptions={assumptions} 
+              updateAssumption={updateAssumption} 
+              marketOpportunity={marketOpportunity} 
+              baseMarketData={baseMarketData} 
+            />
+          </TabsContent>
+
+          {/* Growth Scenarios Tab */}
+          <TabsContent value="scenarios">
+            <GrowthScenariosTab 
+              penetrationScenarios={penetrationScenarios} 
+              assumptions={assumptions}
+              baseMarketData={baseMarketData}
+              marketOpportunity={marketOpportunity}
+            />
+          </TabsContent>
         </Tabs>
 
-        {/* Footer */}
-        <div className="text-center text-sm text-muted-foreground border-t pt-4">
-          <p>This dashboard provides estimates based on available market data and adjustable assumptions for investment analysis purposes.</p>
-        </div>
+        {/* Footer (hidden on Market Overview tab) */}
+        {activeTab !== 'overview' && (
+          <div className="text-center text-sm text-muted-foreground border-t pt-4">
+            <p>This dashboard provides estimates based on available market data and adjustable assumptions for investment analysis purposes.</p>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -29,7 +29,7 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
       localStorage.setItem('assumptions.activeSubtab', activeAssumptionsSubtab)
     } catch {}
   }, [activeAssumptionsSubtab])
-  const [rampPace, setRampPace] = useState(9) // slider value 0.5..10.5, default 9x
+  const [rampPace, setRampPace] = useState(10) // slider value 0.5..20.5, default 10x
   const [rampStartIndex, setRampStartIndex] = useState(1) // default Sep 2025
   const [detailsOpenKey, setDetailsOpenKey] = useState(null)
   // Bulk expense ramp UI state
@@ -163,11 +163,19 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
     )
   }
 
-  // Map slider pace to exponent: 10.5 => even (exponent 0), 10 => ~0.5, 0.5 => ~8
+  // Map slider pace to exponent preserving old behavior up to 10x, then continuing to 20x.
+  // - <=10x matches previous mapping: 0.5x -> 8 (very back-loaded), 10x -> 0.5 (fast ramp)
+  // - 20.5 => even (exponent 0); between 10..20 decreases from 0.5 toward 0
   const mapPaceToExponent = (pace) => {
-    if (pace >= 10.5) return 0
-    const clamped = Math.min(Math.max(pace, 0.5), 10)
-    return Math.max(0.5, Math.min(8, ((10.5 - clamped) / 10) * 8))
+    if (pace >= 20.5) return 0
+    const clamped = Math.min(Math.max(pace, 0.5), 20)
+    if (clamped <= 10) {
+      const inner = Math.min(Math.max(clamped, 0.5), 10)
+      return Math.max(0.5, Math.min(8, ((10.5 - inner) / 10) * 8))
+    }
+    // For 10..20x, linearly decrease exponent from 0.5 at 10x to ~0 approaching 20.5x
+    const fraction = (20.5 - clamped) / (20.5 - 10) // 1.0 at 10x, 0 at 20.5x
+    return Math.max(0, 0.5 * fraction)
   }
 
   // Helper to build a ramp plan with given pace and start month index
@@ -273,9 +281,9 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
                         <div className="flex items-center gap-2">
                           <span>Onboard Velocity</span>
                           <div className="w-56">
-                            <Slider min={0.5} max={10.5} step={0.5} value={[rampPace]} onValueChange={(v)=>{ const p=v[0]; setRampPace(p); const plan = buildRampPlan(p, rampStartIndex); updateAssumption('onboardingPlan', plan) }} />
+                            <Slider min={0.5} max={20.5} step={0.5} value={[rampPace]} onValueChange={(v)=>{ const p=v[0]; setRampPace(p); const plan = buildRampPlan(p, rampStartIndex); updateAssumption('onboardingPlan', plan) }} />
                           </div>
-                          <span>{rampPace >= 10.5 ? 'Even' : `${rampPace.toFixed(1)}x`}</span>
+                          <span>{rampPace >= 20.5 ? 'Even' : `${rampPace.toFixed(1)}x`}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <span>Start month</span>
@@ -736,11 +744,11 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
                     min={0}
                     max={200000}
                     step={1000}
-                    value={[assumptions.expenseContractors || 70000]}
+                    value={[assumptions.expenseContractors || 50000]}
                     onValueChange={(value) => updateAssumption('expenseContractors', value[0])}
                   />
                   <div className="text-sm text-muted-foreground">
-                    ${((assumptions.expenseContractors || 70000)).toLocaleString()} per month
+                    ${((assumptions.expenseContractors || 50000)).toLocaleString()} per month
                   </div>
                   <MonthlyControls assumptionKey="expenseContractors" unit="$" />
                 </div>

@@ -133,7 +133,9 @@ const RevenueOpportunityTab = ({ marketOpportunity, assumptions, penetrationScen
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(adoptionAnnual.subscription)}</div>
-            <p className="text-xs text-muted-foreground">{adoptionAnnual.customers.toLocaleString()} dealers onboarded</p>
+            <p className="text-xs text-muted-foreground">
+              Annual Subscription Revenue at {adoptionAnnual.customers.toLocaleString()} Dealers • {formatCurrency(assumptions.saasBasePricing || 0)} SaaS Subscription + {formatCurrency(assumptions.dealerWebsiteCost || 0)} Dealer Website Subscription per month
+            </p>
           </CardContent>
         </Card>
 

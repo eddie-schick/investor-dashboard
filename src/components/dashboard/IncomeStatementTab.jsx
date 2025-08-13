@@ -112,7 +112,7 @@ const IncomeStatementTab = ({
       
       // Calculate expenses as fixed monthly dollar amounts (with optional monthly overrides/ramps)
       const expensePayroll = getMonthlyValue(assumptions, 'expensePayroll', index) || 110000
-      const expenseContractors = getMonthlyValue(assumptions, 'expenseContractors', index) || 70000
+      const expenseContractors = getMonthlyValue(assumptions, 'expenseContractors', index) || 50000
       // Add contractor spike during implementation months (based on implementation revenue)
       const contractorSpikePct = getMonthlyValue(assumptions, 'contractorsSpikePercentage', index)
       const contractorSpike = implementationRevenue > 0 ? implementationRevenue * ((contractorSpikePct ?? 0) / 100) : 0
@@ -400,7 +400,7 @@ const IncomeStatementTab = ({
 
   const ExpensesHover = ({ label, data, index }) => {
     const contractorSpikePct = getMonthlyValue(assumptions, 'contractorsSpikePercentage', index) ?? 0
-    const contractorsBase = getMonthlyValue(assumptions, 'expenseContractors', index) || 70000
+    const contractorsBase = getMonthlyValue(assumptions, 'expenseContractors', index) || 50000
     const spike = Math.max(0, data.expenses.contractors - contractorsBase)
     return (
       <HoverCard>
