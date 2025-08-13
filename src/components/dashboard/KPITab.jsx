@@ -8,8 +8,8 @@ import { formatCurrency, formatCurrencyCompact } from '@/utils/formatters'
 import { getMonthlyValue, computeActiveCustomersWithOnboarding } from '@/utils/ramping'
 
 const KPITab = ({ assumptions, marketOpportunity, baseMarketData, initialCash = 675000, investmentAmount = 500000, investmentMonth = '2025-10' }) => {
-  const [granularity, setGranularity] = useState('total') // 'monthly' | 'quarterly' | 'yearly' | 'total'
-  const [selectedKey, setSelectedKey] = useState('total')
+  const [granularity, setGranularity] = useState('yearly') // 'monthly' | 'quarterly' | 'yearly' | 'total'
+  const [selectedKey, setSelectedKey] = useState('2026')
 
   // Build timeline months (Aug 2025 - Dec 2027) to match IncomeStatement
   const months = useMemo(() => {
@@ -396,8 +396,8 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData, initialCash = 
       return q4_2026?.key || quarterlyData[0]?.key || 'total'
     }
     if (value === 'yearly') {
-      const y2025 = yearlyData.find((y) => y.key === '2025')
-      return y2025?.key || yearlyData[0]?.key || 'total'
+      const y2026 = yearlyData.find((y) => y.key === '2026')
+      return y2026?.key || yearlyData[0]?.key || 'total'
     }
     return 'total'
   }
