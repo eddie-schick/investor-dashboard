@@ -9,14 +9,47 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Button } from '@/components/ui/button'
 import { formatCurrency } from '@/utils/formatters'
 import { Calendar, Info } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { Switch } from '@/components/ui/switch'
 
 const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, baseMarketData }) => {
   const [implementationsOpen, setImplementationsOpen] = useState(false)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
-  const [rampPace, setRampPace] = useState(10) // slider value 0.5..10.5, default 10x (10.5 = even)
-  const [rampStartIndex, setRampStartIndex] = useState(0) // month offset to start ramping
+  // Persist last selected sub-tab within Model Assumptions
+  const [activeAssumptionsSubtab, setActiveAssumptionsSubtab] = useState(() => {
+    try {
+      return localStorage.getItem('assumptions.activeSubtab') || 'revenue'
+    } catch {
+      return 'revenue'
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('assumptions.activeSubtab', activeAssumptionsSubtab)
+    } catch {}
+  }, [activeAssumptionsSubtab])
+  const [rampPace, setRampPace] = useState(9) // slider value 0.5..10.5, default 9x
+  const [rampStartIndex, setRampStartIndex] = useState(1) // default Sep 2025
   const [detailsOpenKey, setDetailsOpenKey] = useState(null)
+  // Bulk expense ramp UI state
+  const expenseKeys = [
+    'expensePayroll',
+    'expenseContractors',
+    'expenseTravelMarketing',
+    'expenseLicenseFees',
+    'expenseSharedServices',
+    'expenseLegal',
+    'expenseCompanyVehicle',
+    'expenseInsurance',
+    'expenseContingencies',
+    'expenseConsultantAudit',
+  ]
+  const [selectedExpenseKeys, setSelectedExpenseKeys] = useState(expenseKeys)
+  const [bulkPct, setBulkPct] = useState(2)
+  // Default to Jun 2026. scheduleMonths starts Aug 2025; Jun 2026 index = 10
+  const [bulkStartMonth, setBulkStartMonth] = useState(10)
+  const [expenseRampOpen, setExpenseRampOpen] = useState(false)
 
   // Months used across the financial model (Aug 2025 - Dec 2027)
   const scheduleMonths = useMemo(() => {
@@ -163,12 +196,19 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
     return plan
   }
 
-  // Keep it simple: whenever the Dealer Onboarding dialog opens, (re)compute the plan
+  // Always keep onboarding plan in sync with current settings so the Income Statement
+  // reflects it by default without opening the popout.
   useEffect(() => {
-    if (!onboardingOpen || !assumptions.useOnboardingPlan) return
-    const plan = buildRampPlan(rampPace, rampStartIndex)
-    updateAssumption('onboardingPlan', plan)
-  }, [onboardingOpen, rampPace, rampStartIndex])
+    if (!assumptions.useOnboardingPlan) return
+    const nextPlan = buildRampPlan(rampPace, rampStartIndex)
+    const currentPlan = assumptions.onboardingPlan || []
+    const isDifferent =
+      nextPlan.length !== currentPlan.length ||
+      nextPlan.some((value, index) => value !== (currentPlan[index] ?? 0))
+    if (isDifferent) {
+      updateAssumption('onboardingPlan', nextPlan)
+    }
+  }, [assumptions.useOnboardingPlan, assumptions.marketPenetration, rampPace, rampStartIndex, scheduleMonths.length, baseMarketData.totalDealerships])
 
   return (
     <div className="space-y-6">
@@ -178,7 +218,7 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
           <CardDescription>Modify these assumptions to see how they impact the financial projections</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <Tabs defaultValue="revenue">
+          <Tabs value={activeAssumptionsSubtab} onValueChange={setActiveAssumptionsSubtab}>
             <TabsList className="grid grid-cols-3 mb-4">
               <TabsTrigger value="revenue">Revenue</TabsTrigger>
               <TabsTrigger value="expenses">Expenses</TabsTrigger>
@@ -189,12 +229,12 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
               {/* Revenue sections collapsed by default */}
               <Accordion
                 type="multiple"
-                defaultValue={[]}
+                defaultValue={["marketplace", "transactional", "implementation", "maintenance"]}
                 className="w-full"
               >
                 {/* Subscription Revenue (formerly Marketplace Revenue) */}
                 <AccordionItem value="marketplace">
-                  <AccordionTrigger className="text-lg font-semibold">Subscription Revenue</AccordionTrigger>
+                  <AccordionTrigger className="text-lg font-semibold text-blue-600">Subscription Revenue</AccordionTrigger>
                   <AccordionContent className="space-y-4 pt-2">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
@@ -286,7 +326,7 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
                         <Slider
                           id="saasBasePricing"
                           min={0}
-                          max={5000}
+                          max={20000}
                           step={25}
                           value={[assumptions.saasBasePricing]}
                           onValueChange={(value) => updateAssumption('saasBasePricing', value[0])}
@@ -307,7 +347,7 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
               <Slider
                 id="dealerWebsiteCost"
                 min={0}
-                max={2000}
+                max={10000}
                 step={25}
                 value={[assumptions.dealerWebsiteCost]}
                 onValueChange={(value) => updateAssumption('dealerWebsiteCost', value[0])}
@@ -350,7 +390,7 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
                 
                 {/* Transactional Revenue */}
                 <AccordionItem value="transactional">
-                  <AccordionTrigger className="text-lg font-semibold">Transactional Revenue</AccordionTrigger>
+                  <AccordionTrigger className="text-lg font-semibold text-blue-600">Transactional Revenue</AccordionTrigger>
                   <AccordionContent className="space-y-4 pt-2">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-2">
@@ -421,7 +461,7 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
                 
                 {/* Implementation Revenue */}
                 <AccordionItem value="implementation">
-                  <AccordionTrigger className="text-lg font-semibold">Implementation Revenue</AccordionTrigger>
+                  <AccordionTrigger className="text-lg font-semibold text-blue-600">Implementation Revenue</AccordionTrigger>
                   <AccordionContent className="space-y-4 pt-2">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-2">
@@ -465,7 +505,7 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
                             </div>
                           </DialogContent>
                         </Dialog>
-                        <div className="text-sm text-muted-foreground">Defaults to 0 per month. Adjust as needed.</div>
+                        
                       </div>
                       
                        <div className="space-y-2">
@@ -501,11 +541,11 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
                           min={0}
                           max={60}
                           step={5}
-                          value={[assumptions.contractorsSpikePercentage || 40]}
+                           value={[assumptions.contractorsSpikePercentage ?? 0]}
                           onValueChange={(value) => updateAssumption('contractorsSpikePercentage', value[0])}
                         />
                         <div className="text-sm text-muted-foreground">
-                          {(assumptions.contractorsSpikePercentage || 40)}% of implementation cost
+                           {(assumptions.contractorsSpikePercentage ?? 0)}% of implementation cost
                         </div>
                         <MonthlyControls assumptionKey="contractorsSpikePercentage" unit="%" />
                       </div>
@@ -515,7 +555,7 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
                 
                 {/* Maintenance Revenue */}
                 <AccordionItem value="maintenance">
-                  <AccordionTrigger className="text-lg font-semibold">Maintenance Revenue</AccordionTrigger>
+                  <AccordionTrigger className="text-lg font-semibold text-blue-600">Maintenance Revenue</AccordionTrigger>
                   <AccordionContent className="space-y-4 pt-2">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-2">
@@ -566,7 +606,100 @@ const AssumptionsTab = ({ assumptions, updateAssumption, marketOpportunity, base
             </TabsContent>
             
             <TabsContent value="expenses" className="space-y-4">
-              {/* MoM scaling removed per user request */}
+              {/* Bulk expense ramp controls */}
+              <Collapsible open={expenseRampOpen} onOpenChange={setExpenseRampOpen}>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="text-lg">Expense Ramp Controls</CardTitle>
+                        <CardDescription>Select expense categories to ramp by a monthly percent starting from a chosen month.</CardDescription>
+                      </div>
+                      <CollapsibleTrigger asChild>
+                        <Button variant="outline" size="sm">{expenseRampOpen ? 'Hide' : 'Show'}</Button>
+                      </CollapsibleTrigger>
+                    </div>
+                  </CardHeader>
+                  <CollapsibleContent>
+                    <CardContent className="space-y-3">
+                  <div className="flex flex-wrap gap-3 items-center">
+                    {expenseKeys.map((key) => {
+                      const labelMap = {
+                        expensePayroll: 'Payroll',
+                        expenseContractors: 'Contractors',
+                        expenseTravelMarketing: 'Travel & Marketing',
+                        expenseLicenseFees: 'License Fees',
+                        expenseSharedServices: 'Shared Services',
+                        expenseLegal: 'Legal',
+                        expenseCompanyVehicle: 'Company Vehicle',
+                        expenseInsurance: 'Insurance',
+                        expenseContingencies: 'Contingencies',
+                        expenseConsultantAudit: 'Consultants/Audit/Tax',
+                      }
+                      const checked = selectedExpenseKeys.includes(key)
+                      return (
+                        <label key={key} className="flex items-center gap-2 border rounded px-2 py-1 text-sm">
+                          <Checkbox checked={checked} onCheckedChange={(v) => {
+                            setSelectedExpenseKeys((prev) => {
+                              const exists = prev.includes(key)
+                              if (v && !exists) return [...prev, key]
+                              if (!v && exists) return prev.filter(k => k !== key)
+                              return prev
+                            })
+                          }} />
+                          <span>{labelMap[key]}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span>% increase per month</span>
+                      <input
+                        type="number"
+                        className="w-20 border rounded px-2 py-1"
+                        step={0.1}
+                        value={bulkPct}
+                        onChange={(e) => setBulkPct(parseFloat(e.target.value || '0'))}
+                      />
+                      <span>%</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span>Start month</span>
+                      <select
+                        className="border rounded px-2 py-1"
+                        value={bulkStartMonth}
+                        onChange={(e) => setBulkStartMonth(parseInt(e.target.value, 10))}
+                      >
+                        {scheduleMonths.map((m, idx) => (
+                          <option key={idx} value={idx}>{m.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => setSelectedExpenseKeys(expenseKeys)}>Select All</Button>
+                    <Button variant="outline" size="sm" onClick={() => setSelectedExpenseKeys([])}>Unselect All</Button>
+                    <Button variant="outline" size="sm" onClick={() => {
+                      // Disable all expense ramps and clear selection
+                      const next = { ...(assumptions.ramps || {}) }
+                      expenseKeys.forEach(k => { delete next[k] })
+                      updateAssumption('ramps', next)
+                      setSelectedExpenseKeys([])
+                    }}>Clear All</Button>
+                    <Button variant="default" size="sm" onClick={() => {
+                      const next = { ...(assumptions.ramps || {}) }
+                      const targets = selectedExpenseKeys.length > 0 ? selectedExpenseKeys : expenseKeys
+                      targets.forEach(k => {
+                        next[k] = { enabled: true, monthlyPercent: bulkPct, startMonth: bulkStartMonth }
+                      })
+                      updateAssumption('ramps', next)
+                    }}>Apply Changes</Button>
+                  </div>
+                    </CardContent>
+                  </CollapsibleContent>
+                </Card>
+              </Collapsible>
+
+              {/* Expense sliders */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Payroll */}
                 <div className="space-y-2">

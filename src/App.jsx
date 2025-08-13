@@ -1,8 +1,5 @@
-import { useState, useMemo } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { useState, useMemo, useEffect } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Building2, DollarSign, Users } from 'lucide-react'
 import {
   MarketOverviewTab,
   AssumptionsTab,
@@ -11,15 +8,14 @@ import {
   IncomeStatementTab
 } from '@/components/dashboard'
 import { KPITab } from '@/components/dashboard'
-import { formatCurrency } from '@/utils/formatters'
 import './App.css'
 
 function App() {
-  // Market Data (Source: 2023 ATD Data)
+  // Market Data (Source: 2024 NADA/ATD Data)
   const baseMarketData = {
-    totalDealerships: 3816,
-    totalRevenue: 224.65e9, // $224.65B
-    avgDealershipRevenue: 58.87e6, // $58.87M
+    totalDealerships: 3798,
+    totalRevenue: 130.2e9, // $130.2B
+    avgDealershipRevenue: 62.03e6, // $62.03M (ATD reported average)
     totalEmployment: 239345,
     avgEmployeesPerDealership: 63,
     totalTrucksSold: 507277,
@@ -41,38 +37,53 @@ function App() {
     servicePartsMargin: 0.382, // 38.2%
     
     // Current pain points
-    usedTruckLossPerUnit: 3288, // Losing $3,288 per unit
+    usedTruckLossPerUnit: 3082, // Losing $3,082 per unit
     timeWastedSearching: 0.20, // 20% of time wasted
     avgAdvertisingSpend: 86167 // $86,167 per dealership
   }
 
-  // Build default onboarding plan (Aug 2025 - Dec 2027 inclusive) - EVEN distribution adjusted for churn
-  const computeDefaultOnboardingPlan = (penetrationPercent) => {
+  // Build default onboarding plan using the same ramp logic as the popout
+  const mapPaceToExponent = (pace) => {
+    if (pace >= 10.5) return 0
+    const clamped = Math.min(Math.max(pace, 0.5), 10)
+    return Math.max(0.5, Math.min(8, ((10.5 - clamped) / 10) * 8))
+  }
+
+  const buildDefaultOnboardingRampPlan = (penetrationPercent, pace = 9, startIndex = 1) => {
     const months = 29 // Aug-Dec 2025 (5) + 2026 (12) + 2027 (12)
     const totalDealers = baseMarketData.totalDealerships || 3816
     const targetDealers = Math.round(totalDealers * (penetrationPercent / 100))
     if (months <= 0 || targetDealers <= 0) return Array.from({ length: months }, () => 0)
-    const annualChurnRate = 12 // default aligned with initial state
-    const monthlyChurnRate = (annualChurnRate / 100) / 12
-    const survival = (steps) => Math.pow(1 - monthlyChurnRate, steps)
 
-    // Even distribution weights
-    const weights = Array.from({ length: months }, () => 1)
-    const effectiveWeights = weights.map((w, i) => w * survival(months - 1 - i))
-    const effSum = effectiveWeights.reduce((s, x) => s + x, 0)
-    const factor = effSum > 0 ? targetDealers / effSum : 0
-    let plan = weights.map((w) => Math.floor(w * factor))
-
-    const simulateEndActive = (adds) => {
-      let active = 0
-      for (let i = 0; i < months; i++) {
-        active = Math.floor(active * (1 - monthlyChurnRate)) + (adds[i] || 0)
+    const effectiveStart = Math.min(Math.max(0, startIndex || 0), months - 1)
+    const activeMonths = Math.max(1, months - effectiveStart)
+    const exponent = mapPaceToExponent(pace)
+    const weights = Array.from({ length: activeMonths }, (_, i) => Math.pow(i + 1, exponent))
+    const sum = weights.reduce((s, w) => s + w, 0)
+    let alloc = weights.map((w) => Math.round((w / sum) * targetDealers))
+    let diff = targetDealers - alloc.reduce((s, v) => s + v, 0)
+    let idx = activeMonths - 1
+    while (diff !== 0 && activeMonths > 0) {
+      const step = diff > 0 ? 1 : -1
+      if (alloc[idx] + step >= 0) {
+        alloc[idx] += step
+        diff -= step
       }
-      return active
+      idx = (idx - 1 + activeMonths) % activeMonths
     }
-    let endActive = simulateEndActive(plan)
-    let diff = targetDealers - endActive
-    if (diff !== 0) plan[months - 1] = Math.max(0, plan[months - 1] + diff)
+    const plan = Array.from({ length: months }, () => 0)
+    for (let i = 0; i < activeMonths; i++) plan[effectiveStart + i] = alloc[i]
+    return plan
+  }
+
+  // Default implementation plan: 1 engagement in Jan 2026 and 1 in Jul 2026
+  const buildDefaultImplementationPlan = () => {
+    const months = 29 // Aug 2025..Dec 2027
+    const plan = Array.from({ length: months }, () => 0)
+    // Indices relative to Aug 2025
+    // Jan 2026 index = 5, Jul 2026 index = 11
+    plan[5] = 1
+    plan[11] = 1
     return plan
   }
 
@@ -84,12 +95,12 @@ function App() {
     saasBasePricing: 999, // $999/month base SaaS price
     dealerWebsiteCost: 500, // $500/month per dealer website
     leadGenCostPerLead: 150, // $150 cost per lead
-    customerAcquisitionCost: 15000, // $15K CAC
+    customerAcquisitionCost: 5000, // $5K CAC
     customerLifetimeYears: 7, // 7 year customer lifetime
     annualChurnRate: 12, // 12% annual churn
     implementationPrice: 500000, // Price per implementation
-    implementationPlan: [], // monthly counts of implementations (default 0)
-    contractorsSpikePercentage: 40, // 40% of implementation cost
+    implementationPlan: buildDefaultImplementationPlan(), // monthly counts of implementations
+    contractorsSpikePercentage: 0, // default 0% spike of implementation cost
     maintenancePercentage: 18, // 18% of implementation revenue
     maintenanceStartMonth: 3, // 3 months after implementation
     transactionsPerCustomer: 20, // Yearly transactions per customer
@@ -97,10 +108,22 @@ function App() {
 
     // Optional monthly overrides and ramps
     monthlyOverrides: {}, // { [assumptionKey]: number[] }
-    ramps: {},            // { [assumptionKey]: { enabled: boolean, monthlyPercent: number } }
+    ramps: {
+      // Default 2% monthly increase for all expenses starting in Jun 2026 (index 10 from Aug 2025)
+      expensePayroll: { enabled: true, monthlyPercent: 2, startMonth: 10 },
+      expenseContractors: { enabled: true, monthlyPercent: 2, startMonth: 10 },
+      expenseTravelMarketing: { enabled: true, monthlyPercent: 2, startMonth: 10 },
+      expenseLicenseFees: { enabled: true, monthlyPercent: 2, startMonth: 10 },
+      expenseSharedServices: { enabled: true, monthlyPercent: 2, startMonth: 10 },
+      expenseLegal: { enabled: true, monthlyPercent: 2, startMonth: 10 },
+      expenseCompanyVehicle: { enabled: true, monthlyPercent: 2, startMonth: 10 },
+      expenseInsurance: { enabled: true, monthlyPercent: 2, startMonth: 10 },
+      expenseContingencies: { enabled: true, monthlyPercent: 2, startMonth: 10 },
+      expenseConsultantAudit: { enabled: true, monthlyPercent: 2, startMonth: 10 },
+    },            // { [assumptionKey]: { enabled: boolean, monthlyPercent: number, startMonth?: number } }
     // Optional dealer onboarding plan
     useOnboardingPlan: true,
-    onboardingPlan: computeDefaultOnboardingPlan(15), // customers added per month
+    onboardingPlan: buildDefaultOnboardingRampPlan(15), // customers added per month (9x pace, start Sep 2025)
     
     // Expense assumptions (monthly $ amounts)
     expensePayroll: 110000,
@@ -114,6 +137,37 @@ function App() {
     expenseContingencies: 5000,
     expenseConsultantAudit: 2000
   })
+
+  // Shared cash/investment settings across tabs (persisted)
+  const [cashSettings, setCashSettings] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('cash.settings') || '{}')
+      return {
+        initialCash: saved.initialCash ?? 675000,
+        initialCashDate: saved.initialCashDate ?? '2025-07-31',
+        investmentAmount: saved.investmentAmount ?? 1500000,
+        investmentMonth: saved.investmentMonth ?? '2025-10'
+      }
+    } catch {
+      return {
+        initialCash: 675000,
+        initialCashDate: '2025-07-31',
+        investmentAmount: 1500000,
+        investmentMonth: '2025-10'
+      }
+    }
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('cash.settings', JSON.stringify(cashSettings))
+    } catch {}
+  }, [cashSettings])
+
+  const setInitialCash = (value) => setCashSettings((prev) => ({ ...prev, initialCash: value }))
+  const setInitialCashDate = (value) => setCashSettings((prev) => ({ ...prev, initialCashDate: value }))
+  const setInvestmentAmount = (value) => setCashSettings((prev) => ({ ...prev, investmentAmount: value }))
+  const setInvestmentMonth = (value) => setCashSettings((prev) => ({ ...prev, investmentMonth: value }))
 
   // Update assumption function
   const updateAssumption = (key, value) => {
@@ -174,8 +228,8 @@ function App() {
     // Market size calculations
     const totalAddressableMarket = baseMarketData.totalSoftwareMarket + 
                                  (baseMarketData.totalTransactionValue * 0.02) + // 2% max transaction fee
-                                 (baseMarketData.totalDealerships * 1000 * 12) + // $1K/month websites
-                                 (baseMarketData.totalDealerships * 500 * 200) // Lead gen potential
+                                  (baseMarketData.totalDealerships * 1000 * 12) + // $1K/month websites
+                                  (baseMarketData.totalDealerships * 500 * 200) // Lead gen potential
     
     return {
       targetDealerships,
@@ -195,13 +249,24 @@ function App() {
     }
   }, [assumptions, baseMarketData])
 
-  // Penetration scenarios
+  // Penetration scenarios — compute revenue from assumptions (SaaS + Websites + Transaction fees)
+  const revenueAtPct = (pct) => {
+    const dealers = Math.round(baseMarketData.totalDealerships * (pct / 100))
+    const saasAnnual = dealers * (assumptions.saasBasePricing || 0) * 12
+    const websiteAnnual = dealers * (assumptions.dealerWebsiteCost || 0) * 12
+    const tpcYear = assumptions.transactionsPerCustomer || 0
+    const avgPrice = assumptions.avgTransactionPrice || baseMarketData.avgTruckPrice
+    const feeRate = (assumptions.transactionFeeRate || 0) / 100
+    const transactional = dealers * tpcYear * avgPrice * feeRate
+    const total = saasAnnual + websiteAnnual + transactional
+    return Math.round(total / 1e6) // value in Millions for the chart
+  }
   const penetrationScenarios = [
-    { penetration: '5%', dealerships: Math.round(baseMarketData.totalDealerships * 0.05), revenue: Math.round((marketOpportunity.totalRevenue * 0.05 / assumptions.marketPenetration) / 1e6) },
-    { penetration: '10%', dealerships: Math.round(baseMarketData.totalDealerships * 0.10), revenue: Math.round((marketOpportunity.totalRevenue * 0.10 / assumptions.marketPenetration) / 1e6) },
-    { penetration: '15%', dealerships: Math.round(baseMarketData.totalDealerships * 0.15), revenue: Math.round((marketOpportunity.totalRevenue * 0.15 / assumptions.marketPenetration) / 1e6) },
-    { penetration: '25%', dealerships: Math.round(baseMarketData.totalDealerships * 0.25), revenue: Math.round((marketOpportunity.totalRevenue * 0.25 / assumptions.marketPenetration) / 1e6) },
-    { penetration: '35%', dealerships: Math.round(baseMarketData.totalDealerships * 0.35), revenue: Math.round((marketOpportunity.totalRevenue * 0.35 / assumptions.marketPenetration) / 1e6) }
+    { penetration: '5%', dealerships: Math.round(baseMarketData.totalDealerships * 0.05), revenue: revenueAtPct(5) },
+    { penetration: '10%', dealerships: Math.round(baseMarketData.totalDealerships * 0.10), revenue: revenueAtPct(10) },
+    { penetration: '15%', dealerships: Math.round(baseMarketData.totalDealerships * 0.15), revenue: revenueAtPct(15) },
+    { penetration: '25%', dealerships: Math.round(baseMarketData.totalDealerships * 0.25), revenue: revenueAtPct(25) },
+    { penetration: '35%', dealerships: Math.round(baseMarketData.totalDealerships * 0.35), revenue: revenueAtPct(35) }
   ]
 
   return (
@@ -209,22 +274,8 @@ function App() {
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
         <div className="text-center space-y-4">
-          <h1 className="text-4xl font-bold text-foreground">Commercial Truck Dealership Market</h1>
-          <p className="text-xl text-muted-foreground">Interactive Investor Dashboard - Market Opportunity Analysis</p>
-          <div className="flex justify-center space-x-4">
-            <Badge variant="secondary" className="text-sm">
-              <Building2 className="w-4 h-4 mr-1" />
-              {baseMarketData.totalDealerships.toLocaleString()} Dealerships
-            </Badge>
-            <Badge variant="secondary" className="text-sm">
-              <DollarSign className="w-4 h-4 mr-1" />
-              {formatCurrency(baseMarketData.totalRevenue)} Industry Revenue
-            </Badge>
-            <Badge variant="secondary" className="text-sm">
-              <Users className="w-4 h-4 mr-1" />
-              {baseMarketData.totalEmployment.toLocaleString()} Employees
-            </Badge>
-          </div>
+          <h1 className="text-4xl font-bold text-foreground">SHAED Finance Model</h1>
+          <p className="text-xl text-muted-foreground">Dealer Market Opportunity Analysis</p>
         </div>
 
         <Tabs defaultValue="overview" className="w-full">
@@ -254,12 +305,27 @@ function App() {
 
           {/* Growth Scenarios Tab */}
           <TabsContent value="scenarios">
-            <GrowthScenariosTab penetrationScenarios={penetrationScenarios} />
+            <GrowthScenariosTab 
+              penetrationScenarios={penetrationScenarios} 
+              assumptions={assumptions}
+              baseMarketData={baseMarketData}
+              marketOpportunity={marketOpportunity}
+            />
           </TabsContent>
           
           {/* Income Statement Tab */}
           <TabsContent value="income">
-            <IncomeStatementTab assumptions={assumptions} />
+            <IncomeStatementTab 
+              assumptions={assumptions}
+              initialCash={cashSettings.initialCash}
+              setInitialCash={setInitialCash}
+              initialCashDate={cashSettings.initialCashDate}
+              setInitialCashDate={setInitialCashDate}
+              investmentAmount={cashSettings.investmentAmount}
+              setInvestmentAmount={setInvestmentAmount}
+              investmentMonth={cashSettings.investmentMonth}
+              setInvestmentMonth={setInvestmentMonth}
+            />
           </TabsContent>
 
           {/* Assumptions Tab */}
@@ -274,13 +340,19 @@ function App() {
 
           {/* Key Metrics Tab */}
           <TabsContent value="kpi">
-            <KPITab assumptions={assumptions} marketOpportunity={marketOpportunity} baseMarketData={baseMarketData} />
+            <KPITab 
+              assumptions={assumptions}
+              marketOpportunity={marketOpportunity}
+              baseMarketData={baseMarketData}
+              initialCash={cashSettings.initialCash}
+              investmentAmount={cashSettings.investmentAmount}
+              investmentMonth={cashSettings.investmentMonth}
+            />
           </TabsContent>
         </Tabs>
 
         {/* Footer */}
         <div className="text-center text-sm text-muted-foreground border-t pt-4">
-          <p>Data Sources: 2023 ATD (American Truck Dealers) Report, Industry Research, Market Analysis</p>
           <p>This dashboard provides estimates based on available market data and adjustable assumptions for investment analysis purposes.</p>
         </div>
       </div>

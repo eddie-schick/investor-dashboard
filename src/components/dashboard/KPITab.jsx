@@ -3,11 +3,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, AreaChart, Area } from 'recharts'
-import { formatCurrency } from '@/utils/formatters'
+import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, AreaChart, Area, ReferenceLine as RechartsReferenceLine } from 'recharts'
+import { formatCurrency, formatCurrencyCompact } from '@/utils/formatters'
 import { getMonthlyValue, computeActiveCustomersWithOnboarding } from '@/utils/ramping'
 
-const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
+const KPITab = ({ assumptions, marketOpportunity, baseMarketData, initialCash = 675000, investmentAmount = 1500000, investmentMonth = '2025-10' }) => {
   const [granularity, setGranularity] = useState('total') // 'monthly' | 'quarterly' | 'yearly' | 'total'
   const [selectedKey, setSelectedKey] = useState('total')
 
@@ -219,8 +219,37 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
       maint: m.maintenanceRevenue,
     }))
   ), [monthlyData])
-  const totalCustomers = marketOpportunity.targetDealerships || 0
-  const marketplaceUsers = marketOpportunity.marketplaceUsers || 0
+  // Dealers on Platform should reflect the modeled customer count at the END of the selected period
+  const dealersOnPlatform = useMemo(() => {
+    if (!monthlyData?.length) return 0
+    // Monthly → customers for that specific month
+    if (granularity === 'monthly') {
+      const idx = months.findIndex((m) => m.key === selectedKey)
+      return Math.round(idx >= 0 ? (monthlyData[idx]?.customers || 0) : 0)
+    }
+    // Quarterly → customers at the end of that quarter
+    if (granularity === 'quarterly') {
+      const match = /^Q(\d)-(\d{4})$/.exec(selectedKey || '')
+      if (match) {
+        const qNum = parseInt(match[1], 10)
+        const year = parseInt(match[2], 10)
+        let lastIdx = -1
+        months.forEach((m, i) => {
+          if (m.year === year && (Math.floor(m.month / 3) + 1) === qNum) lastIdx = i
+        })
+        return Math.round(lastIdx >= 0 ? (monthlyData[lastIdx]?.customers || 0) : 0)
+      }
+    }
+    // Yearly → customers at the end of the year (Dec)
+    if (granularity === 'yearly') {
+      const year = parseInt(selectedKey || '0', 10)
+      let lastIdx = -1
+      months.forEach((m, i) => { if (m.year === year) lastIdx = i })
+      return Math.round(lastIdx >= 0 ? (monthlyData[lastIdx]?.customers || 0) : 0)
+    }
+    // Total → customers at the end of the entire modeled period
+    return Math.round(monthlyData[monthlyData.length - 1]?.customers || 0)
+  }, [granularity, selectedKey, monthlyData, months])
 
   const annualSaasRevenue = selectedData?.subscriptionRevenue || 0
   const transactionRevenue = selectedData?.transactionRevenue || 0
@@ -233,21 +262,37 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
   ]
 
   const cac = assumptions.customerAcquisitionCost || 0
-  const pricePerMonth = assumptions.saasBasePricing || 0
-  const cacPaybackMonths = pricePerMonth > 0 ? Math.round((cac / (pricePerMonth * 12)) * 12) : 0
+  const selectedMonthIndex = useMemo(() => {
+    if (granularity !== 'monthly') return -1
+    return months.findIndex((m) => m.key === selectedKey)
+  }, [granularity, months, selectedKey])
+  const pricePerMonth = selectedMonthIndex >= 0 ? (getMonthlyValue(assumptions, 'saasBasePricing', selectedMonthIndex) || 0) : (assumptions.saasBasePricing || 0)
+  const cacPaybackMonths = pricePerMonth > 0 ? Math.round(cac / pricePerMonth) : 0
 
   const ltv = marketOpportunity.customerLifetimeValue || 0
   const ltvcac = marketOpportunity.ltvcacRatio || 0
 
-  const avgTransactionPrice = assumptions.avgTransactionPrice || baseMarketData.avgTruckPrice
+  const avgTransactionPrice = selectedMonthIndex >= 0
+    ? (getMonthlyValue(assumptions, 'avgTransactionPrice', selectedMonthIndex) || baseMarketData.avgTruckPrice)
+    : (assumptions.avgTransactionPrice || baseMarketData.avgTruckPrice)
 
-  const avgRevenuePerCustomer = totalCustomers > 0 ? totalAnnualRevenue / totalCustomers : 0
+  // Additional KPI values for snapshot
+  const saasMonthlyPrice = selectedMonthIndex >= 0
+    ? (getMonthlyValue(assumptions, 'saasBasePricing', selectedMonthIndex) || 0)
+    : (assumptions.saasBasePricing || 0)
+  const websiteMonthlyPrice = selectedMonthIndex >= 0
+    ? (getMonthlyValue(assumptions, 'dealerWebsiteCost', selectedMonthIndex) || 0)
+    : (assumptions.dealerWebsiteCost || 0)
+  const feeRatePct = selectedMonthIndex >= 0
+    ? (getMonthlyValue(assumptions, 'transactionFeeRate', selectedMonthIndex) || 0)
+    : (assumptions.transactionFeeRate || 0)
+  const avgTransactionalRevenuePerUnit = avgTransactionPrice * (feeRatePct / 100)
+
+  const avgRevenuePerCustomer = dealersOnPlatform > 0 ? totalAnnualRevenue / dealersOnPlatform : 0
 
   // Cash balance series (Aug 2025–Dec 2027) using same formulas as IncomeStatementTab
   const cashBalanceSeries = useMemo(() => {
-    let cumulativeCashBalance = 675000
-    const investmentAmount = 1500000
-    const investmentMonth = '2025-10'
+    let cumulativeCashBalance = initialCash
     const implementationProjects = []
     return months.map((period, index) => {
       // Implementation revenue and project tracking
@@ -298,7 +343,7 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
       // Expenses (match IncomeStatement defaults)
       const expensePayroll = getMonthlyValue(assumptions, 'expensePayroll', index) || 110000
       const expenseContractors = getMonthlyValue(assumptions, 'expenseContractors', index) || 70000
-      const contractorSpikePct = getMonthlyValue(assumptions, 'contractorsSpikePercentage', index) || 40
+      const contractorSpikePct = getMonthlyValue(assumptions, 'contractorsSpikePercentage', index) ?? 0
       const contractorSpike = implementationRevenue > 0 ? implementationRevenue * (contractorSpikePct / 100) : 0
       const expenseTravelMarketing = getMonthlyValue(assumptions, 'expenseTravelMarketing', index) || 30000
       const expenseLicenseFees = getMonthlyValue(assumptions, 'expenseLicenseFees', index) || 15000
@@ -323,11 +368,39 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
         expenseConsultantAudit
 
       const netIncome = totalRevenue - totalExpenses
-      const investmentInflow = period.key === investmentMonth ? investmentAmount : 0
+      const investmentInflow = period.key === investmentMonth ? (investmentAmount || 0) : 0
       cumulativeCashBalance += netIncome + investmentInflow
       return { label: period.label, cash: cumulativeCashBalance }
     })
-  }, [months, assumptions])
+  }, [months, assumptions, initialCash, investmentAmount, investmentMonth])
+
+  // Compute a dynamic Y-axis domain with padding for the cash chart to avoid cramped scaling
+  const cashYAxisDomain = useMemo(() => {
+    if (!cashBalanceSeries || cashBalanceSeries.length === 0) return ['auto', 'auto']
+    const values = cashBalanceSeries.map((d) => d.cash)
+    const min = Math.min(...values)
+    const max = Math.max(...values)
+    const range = Math.max(1, max - min)
+    const pad = range * 0.05
+    return [min - pad, max + pad]
+  }, [cashBalanceSeries])
+
+  // Default selection per granularity
+  const defaultKeyFor = (value) => {
+    if (value === 'monthly') {
+      const dec2026 = months.find((m) => m.year === 2026 && m.month === 11)
+      return dec2026?.key || months[0]?.key || 'total'
+    }
+    if (value === 'quarterly') {
+      const q4_2026 = quarterlyData.find((q) => q.key === 'Q4-2026')
+      return q4_2026?.key || quarterlyData[0]?.key || 'total'
+    }
+    if (value === 'yearly') {
+      const y2025 = yearlyData.find((y) => y.key === '2025')
+      return y2025?.key || yearlyData[0]?.key || 'total'
+    }
+    return 'total'
+  }
 
   return (
     <div className="space-y-6">
@@ -336,9 +409,12 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
           <div>
             <CardTitle>Key Metrics</CardTitle>
             <CardDescription>Analyze KPIs by month, quarter, year, or total</CardDescription>
+            {granularity === 'total' && (
+              <div className="text-xs text-muted-foreground mt-1">Total covers Aug 2025 – Dec 2027</div>
+            )}
           </div>
           <div className="flex gap-3 items-center">
-            <Tabs value={granularity} onValueChange={(v) => { setGranularity(v); setSelectedKey(periodOptions[0]?.key || 'total') }}>
+            <Tabs value={granularity} onValueChange={(v) => { setGranularity(v); setSelectedKey(defaultKeyFor(v)) }}>
               <TabsList>
                 <TabsTrigger value="monthly">Monthly</TabsTrigger>
                 <TabsTrigger value="quarterly">Quarterly</TabsTrigger>
@@ -364,10 +440,18 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm">Dealers on Platform</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold">{totalCustomers.toLocaleString()}</div></CardContent>
+          <CardContent><div className="text-2xl font-bold">{dealersOnPlatform.toLocaleString()}</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Annual Transactions</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">{
+            granularity === 'monthly'
+              ? 'Monthly Transactions'
+              : granularity === 'quarterly'
+                ? 'Quarterly Transactions'
+                : granularity === 'total'
+                  ? 'Total Transactions'
+                  : 'Annual Transactions'
+          }</CardTitle></CardHeader>
           <CardContent><div className="text-2xl font-bold">{annualTransactions.toLocaleString()}</div></CardContent>
         </Card>
         <Card>
@@ -375,7 +459,15 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
           <CardContent><div className="text-2xl font-bold">{formatCurrency(annualSaasRevenue)}</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Total Annual Revenue</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">{
+            granularity === 'monthly'
+              ? 'Total Monthly Revenue'
+              : granularity === 'quarterly'
+                ? 'Total Quarter Revenue'
+                : granularity === 'total'
+                  ? 'Total Revenue'
+                  : 'Total Annual Revenue'
+          }</CardTitle></CardHeader>
           <CardContent><div className="text-2xl font-bold">{formatCurrency(totalAnnualRevenue)}</div></CardContent>
         </Card>
         <Card>
@@ -395,11 +487,12 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={cashBalanceSeries}>
+              <BarChart data={cashBalanceSeries} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="label" hide={true} />
-                <YAxis />
+                <YAxis domain={cashYAxisDomain} tickFormatter={(v) => formatCurrencyCompact(Number(v))} />
                 <Tooltip formatter={(v) => formatCurrency(Number(v))} />
+                <RechartsReferenceLine y={0} stroke="#9ca3af" strokeDasharray="3 3" />
                 <Bar dataKey="cash" fill="#60a5fa" name="Cash Balance" />
               </BarChart>
             </ResponsiveContainer>
@@ -425,16 +518,20 @@ const KPITab = ({ assumptions, marketOpportunity, baseMarketData }) => {
                   <TableCell className="font-medium">{formatCurrency(avgRevenuePerCustomer)}</TableCell>
                 </TableRow>
                 <TableRow>
+                  <TableCell>Avg SaaS Subscription Price</TableCell>
+                  <TableCell className="font-medium">{formatCurrency(saasMonthlyPrice)}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>Avg Dealer Website Price</TableCell>
+                  <TableCell className="font-medium">{formatCurrency(websiteMonthlyPrice)}</TableCell>
+                </TableRow>
+                <TableRow>
                   <TableCell>Annual Transactions</TableCell>
                   <TableCell className="font-medium">{annualTransactions.toLocaleString()}</TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell>Avg Transaction Price</TableCell>
-                  <TableCell className="font-medium">{formatCurrency(avgTransactionPrice)}</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell>Transaction Fee Rate</TableCell>
-                  <TableCell className="font-medium">{assumptions.transactionFeeRate}%</TableCell>
+                  <TableCell>Avg Transactional Revenue per Unit</TableCell>
+                  <TableCell className="font-medium">{formatCurrency(avgTransactionalRevenuePerUnit)}</TableCell>
                 </TableRow>
                 <TableRow>
                   <TableCell>Customer Lifetime Value (LTV)</TableCell>

@@ -8,15 +8,21 @@ import { formatCurrency, formatCurrencyCompact } from '@/utils/formatters'
 import { getMonthlyValue, computeActiveCustomersWithOnboarding } from '@/utils/ramping'
 import { HoverCard, HoverCardTrigger, HoverCardContent } from '@/components/ui/hover-card'
 
-const IncomeStatementTab = ({ assumptions }) => {
+const IncomeStatementTab = ({ 
+  assumptions,
+  initialCash,
+  setInitialCash,
+  initialCashDate,
+  setInitialCashDate,
+  investmentAmount,
+  setInvestmentAmount,
+  investmentMonth,
+  setInvestmentMonth
+}) => {
   const [view, setView] = useState('monthly')
   const [isEditing, setIsEditing] = useState(false)
   const [overrides, setOverrides] = useState({}) // { [monthIndex]: { subscriptionRevenue, transactionRevenue, implementationRevenue, maintenanceRevenue, totalExpenses, investmentInflow } }
-  // Cash settings
-  const [initialCash, setInitialCash] = useState(675000)
-  const [initialCashDate, setInitialCashDate] = useState('2025-07-31')
-  const [investmentAmount, setInvestmentAmount] = useState(1500000)
-  const [investmentMonth, setInvestmentMonth] = useState('2025-10') // YYYY-MM
+  // Cash settings come from parent via props
 
   // Generate months from Aug 2025 to Dec 2027
   const months = useMemo(() => {
@@ -108,8 +114,8 @@ const IncomeStatementTab = ({ assumptions }) => {
       const expensePayroll = getMonthlyValue(assumptions, 'expensePayroll', index) || 110000
       const expenseContractors = getMonthlyValue(assumptions, 'expenseContractors', index) || 70000
       // Add contractor spike during implementation months (based on implementation revenue)
-      const contractorSpikePct = getMonthlyValue(assumptions, 'contractorsSpikePercentage', index) || 40
-      const contractorSpike = implementationRevenue > 0 ? implementationRevenue * (contractorSpikePct / 100) : 0
+      const contractorSpikePct = getMonthlyValue(assumptions, 'contractorsSpikePercentage', index)
+      const contractorSpike = implementationRevenue > 0 ? implementationRevenue * ((contractorSpikePct ?? 0) / 100) : 0
       const expenseTravelMarketing = getMonthlyValue(assumptions, 'expenseTravelMarketing', index) || 30000
       const expenseLicenseFees = getMonthlyValue(assumptions, 'expenseLicenseFees', index) || 15000
       const expenseSharedServices = getMonthlyValue(assumptions, 'expenseSharedServices', index) || 18000
@@ -228,13 +234,57 @@ const IncomeStatementTab = ({ assumptions }) => {
     return quarters
   }, [incomeData])
 
+  // Create yearly aggregated data
+  const yearlyData = useMemo(() => {
+    const yearToMonths = new Map()
+    for (const monthData of incomeData) {
+      const y = monthData.period.year
+      if (!yearToMonths.has(y)) {
+        yearToMonths.set(y, [])
+      }
+      yearToMonths.get(y).push(monthData)
+    }
+
+    const years = []
+    for (const [year, monthsInYear] of yearToMonths.entries()) {
+      const yearData = {
+        label: String(year),
+        subscriptionRevenue: monthsInYear.reduce((sum, m) => sum + m.subscriptionRevenue, 0),
+        transactionRevenue: monthsInYear.reduce((sum, m) => sum + m.transactionRevenue, 0),
+        implementationRevenue: monthsInYear.reduce((sum, m) => sum + m.implementationRevenue, 0),
+        maintenanceRevenue: monthsInYear.reduce((sum, m) => sum + m.maintenanceRevenue, 0),
+        investmentInflow: monthsInYear.reduce((sum, m) => sum + (m.investmentInflow || 0), 0),
+        totalRevenue: monthsInYear.reduce((sum, m) => sum + m.totalRevenue, 0),
+        expenses: {
+          payroll: monthsInYear.reduce((sum, m) => sum + m.expenses.payroll, 0),
+          contractors: monthsInYear.reduce((sum, m) => sum + m.expenses.contractors, 0),
+          travelMarketing: monthsInYear.reduce((sum, m) => sum + m.expenses.travelMarketing, 0),
+          licenseFees: monthsInYear.reduce((sum, m) => sum + m.expenses.licenseFees, 0),
+          sharedServices: monthsInYear.reduce((sum, m) => sum + m.expenses.sharedServices, 0),
+          legal: monthsInYear.reduce((sum, m) => sum + m.expenses.legal, 0),
+          companyVehicle: monthsInYear.reduce((sum, m) => sum + m.expenses.companyVehicle, 0),
+          insurance: monthsInYear.reduce((sum, m) => sum + m.expenses.insurance, 0),
+          contingencies: monthsInYear.reduce((sum, m) => sum + m.expenses.contingencies, 0),
+          consultantAudit: monthsInYear.reduce((sum, m) => sum + m.expenses.consultantAudit, 0)
+        },
+        totalExpenses: monthsInYear.reduce((sum, m) => sum + m.totalExpenses, 0),
+        netIncome: monthsInYear.reduce((sum, m) => sum + m.netIncome, 0),
+        cumulativeCashBalance: monthsInYear[monthsInYear.length - 1].cumulativeCashBalance
+      }
+      years.push(yearData)
+    }
+
+    // Preserve chronological order
+    return years.sort((a, b) => Number(a.label) - Number(b.label))
+  }, [incomeData])
+
   // Toggle between monthly/quarterly/expense breakdown views
   const handleViewChange = (newView) => {
     setView(newView)
   }
   
   // Determine which data set to use
-  const displayData = view === 'quarterly' ? quarterlyData : incomeData
+  const displayData = view === 'quarterly' ? quarterlyData : (view === 'yearly' ? yearlyData : incomeData)
 
   // Helpers to build hover explanations (monthly view)
   const formatPercent = (value) => `${Number(value || 0).toFixed(2).replace(/\.00$/, '')}%`
@@ -349,7 +399,7 @@ const IncomeStatementTab = ({ assumptions }) => {
   )
 
   const ExpensesHover = ({ label, data, index }) => {
-    const contractorSpikePct = getMonthlyValue(assumptions, 'contractorsSpikePercentage', index) || 40
+    const contractorSpikePct = getMonthlyValue(assumptions, 'contractorsSpikePercentage', index) ?? 0
     const contractorsBase = getMonthlyValue(assumptions, 'expenseContractors', index) || 70000
     const spike = Math.max(0, data.expenses.contractors - contractorsBase)
     return (
@@ -402,7 +452,7 @@ const IncomeStatementTab = ({ assumptions }) => {
     const prev = value - net - (inflow || 0)
     return (
       <HoverCard>
-        <HoverCardTrigger className="cursor-help font-bold">{formatCurrency(value)}</HoverCardTrigger>
+        <HoverCardTrigger className="cursor-help font-bold">{value < 0 ? formatCurrencyCompact(value) : formatCurrency(value)}</HoverCardTrigger>
         <HoverCardContent>
           <div className="space-y-1">
             <div className="font-medium">Cash balance — {label}</div>
@@ -421,9 +471,10 @@ const IncomeStatementTab = ({ assumptions }) => {
           <CardTitle>Income Statement</CardTitle>
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <Tabs value={view} onValueChange={handleViewChange}>
-              <TabsList className="grid grid-cols-3">
+              <TabsList className="grid grid-cols-4">
                 <TabsTrigger value="monthly">Monthly</TabsTrigger>
                 <TabsTrigger value="quarterly">Quarterly</TabsTrigger>
+                <TabsTrigger value="yearly">Yearly</TabsTrigger>
                 <TabsTrigger value="expenses">Expense Breakdown</TabsTrigger>
               </TabsList>
             </Tabs>
@@ -455,11 +506,11 @@ const IncomeStatementTab = ({ assumptions }) => {
         <CardContent>
           <div className="overflow-x-auto">
             {view === 'expenses' ? (
-              <div className="overflow-y-auto max-h-[60vh]">
-                <Table>
-                  <TableHeader className="sticky top-0 z-10 bg-background">
+              <div className="relative overflow-y-auto max-h-[60vh]">
+                <Table container={false}>
+                    <TableHeader>
                     <TableRow>
-                      <TableHead className="text-center sticky left-0 top-0 z-20 bg-background">Month</TableHead>
+                      <TableHead className="text-center sticky top-0 z-10 bg-background">Month</TableHead>
                       <TableHead className="text-center sticky top-0 z-10 bg-background">Payroll</TableHead>
                       <TableHead className="text-center sticky top-0 z-10 bg-background">Contractors</TableHead>
                       <TableHead className="text-center sticky top-0 z-10 bg-background">Travel & Marketing</TableHead>
@@ -476,7 +527,7 @@ const IncomeStatementTab = ({ assumptions }) => {
                   <TableBody>
                     {incomeData.map((data, index) => (
                       <TableRow key={index}>
-                        <TableCell className="text-center sticky left-0 z-10 bg-background">{data.period.label}</TableCell>
+                        <TableCell className="text-center">{data.period.label}</TableCell>
                         <TableCell className="text-center">{formatCurrency(data.expenses.payroll)}</TableCell>
                         <TableCell className="text-center">{formatCurrency(data.expenses.contractors)}</TableCell>
                         <TableCell className="text-center">{formatCurrency(data.expenses.travelMarketing)}</TableCell>
@@ -495,26 +546,26 @@ const IncomeStatementTab = ({ assumptions }) => {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <div className="overflow-y-auto max-h-[60vh]">
-                  <Table className="w-full">
+                <div className="relative overflow-y-auto max-h-[60vh]">
+                  <Table className="w-full" container={false}>
                     <TableHeader className="sticky top-0 z-10 bg-background">
                       <TableRow>
-                        <TableHead className="text-center sticky left-0 top-0 z-20 bg-background">{view === 'quarterly' ? 'Quarter' : 'Month'}</TableHead>
-                        <TableHead className="text-center">Subscription</TableHead>
-                        <TableHead className="text-center">Transactional</TableHead>
-                        <TableHead className="text-center">Implementation</TableHead>
-                        <TableHead className="text-center">Maintenance</TableHead>
-                        <TableHead className="text-center">Total Revenue</TableHead>
-                        <TableHead className="text-center">Total Expenses</TableHead>
-                        <TableHead className="text-center">Net Income</TableHead>
-                        <TableHead className="text-center">Investment</TableHead>
-                        <TableHead className="text-center">Cash Balance</TableHead>
+                        <TableHead className="text-center sticky top-0 bg-background">{view === 'quarterly' ? 'Quarter' : (view === 'yearly' ? 'Year' : 'Month')}</TableHead>
+                        <TableHead className="text-center sticky top-0 bg-background">Subscription</TableHead>
+                        <TableHead className="text-center sticky top-0 bg-background">Transactional</TableHead>
+                        <TableHead className="text-center sticky top-0 bg-background">Implementation</TableHead>
+                        <TableHead className="text-center sticky top-0 bg-background">Maintenance</TableHead>
+                        <TableHead className="text-center sticky top-0 bg-background">Total Revenue</TableHead>
+                        <TableHead className="text-center sticky top-0 bg-background">Total Expenses</TableHead>
+                        <TableHead className="text-center sticky top-0 bg-background">Net Income</TableHead>
+                        <TableHead className="text-center sticky top-0 bg-background">Investment</TableHead>
+                        <TableHead className="text-center sticky top-0 bg-background">Cash Balance</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {displayData.map((data, index) => (
                         <TableRow key={index}>
-                          <TableCell className="text-center sticky left-0 z-10 bg-background">{view === 'quarterly' ? data.label : data.period.label}</TableCell>
+                          <TableCell className="text-center">{view === 'monthly' ? data.period.label : data.label}</TableCell>
                           <TableCell className="text-center">
                             {isEditing && view === 'monthly' ? (
                               <input type="number" className="w-24 border rounded px-2 py-1 text-sm text-right" value={overrides[index]?.subscriptionRevenue ?? ''} placeholder={String(Math.round(data.subscriptionRevenue))} min="0" step="1000" onChange={(e)=>{
@@ -623,10 +674,10 @@ const IncomeStatementTab = ({ assumptions }) => {
                             )}
                           </TableCell>
                           <TableCell className={`text-center ${data.cumulativeCashBalance >= 0 ? 'text-green-600 font-bold' : 'text-red-600 font-bold'}`}> 
-                            {view === 'monthly' ? (
+                          {view === 'monthly' ? (
                               <CashHover label={data.period.label} value={data.cumulativeCashBalance} net={data.netIncome} inflow={data.investmentInflow} />
                             ) : (
-                              formatCurrency(data.cumulativeCashBalance)
+                              data.cumulativeCashBalance < 0 ? formatCurrencyCompact(data.cumulativeCashBalance) : formatCurrency(data.cumulativeCashBalance)
                             )}
                           </TableCell>
                         </TableRow>

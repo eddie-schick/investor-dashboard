@@ -9,13 +9,13 @@ function Collapsible({
 function CollapsibleTrigger({
   ...props
 }) {
-  return (<CollapsiblePrimitive.CollapsibleTrigger data-slot="collapsible-trigger" {...props} />);
+  return (<CollapsiblePrimitive.Trigger data-slot="collapsible-trigger" {...props} />);
 }
 
 function CollapsibleContent({
   ...props
 }) {
-  return (<CollapsiblePrimitive.CollapsibleContent data-slot="collapsible-content" {...props} />);
+  return (<CollapsiblePrimitive.Content data-slot="collapsible-content" {...props} />);
 }
 
 export { Collapsible, CollapsibleTrigger, CollapsibleContent }

@@ -1,13 +1,71 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { formatCurrency } from '@/utils/formatters'
+import { computeActiveCustomersWithOnboarding } from '@/utils/ramping'
 
-const GrowthScenariosTab = ({ penetrationScenarios }) => {
+const GrowthScenariosTab = ({ penetrationScenarios, assumptions, baseMarketData, marketOpportunity }) => {
+  const totalDealerships = baseMarketData?.totalDealerships || 3816
+
+  const makeScenarioRange = (minPct, maxPct) => {
+    const minDealers = Math.round(totalDealerships * (minPct / 100))
+    const maxDealers = Math.round(totalDealerships * (maxPct / 100))
+
+    const calcAnnual = (dealers) => {
+      const saasAnnual = dealers * (assumptions?.saasBasePricing || 0) * 12
+      const websiteAnnual = dealers * (assumptions?.dealerWebsiteCost || 0) * 12
+      const tpcYear = assumptions?.transactionsPerCustomer || 0
+      const avgPrice = assumptions?.avgTransactionPrice || baseMarketData?.avgTruckPrice || 0
+      const feeRate = (assumptions?.transactionFeeRate || 0) / 100
+      const transactional = dealers * tpcYear * avgPrice * feeRate
+      return saasAnnual + websiteAnnual + transactional
+    }
+
+    const annualRevenueMin = calcAnnual(minDealers)
+    const annualRevenueMax = calcAnnual(maxDealers)
+
+    const cac = assumptions?.customerAcquisitionCost || 0
+    const investMin = cac * minDealers
+    const investMax = cac * maxDealers
+
+    let monthsToMin = null
+    let monthsToMax = null
+    if (assumptions?.useOnboardingPlan && Array.isArray(assumptions?.onboardingPlan)) {
+      for (let i = 0; i < assumptions.onboardingPlan.length; i++) {
+        const active = computeActiveCustomersWithOnboarding(assumptions, i, totalDealerships)
+        if (monthsToMin === null && active >= minDealers) monthsToMin = i + 1
+        if (monthsToMax === null && active >= maxDealers) monthsToMax = i + 1
+        if (monthsToMin !== null && monthsToMax !== null) break
+      }
+    }
+
+    const formatMonthsRange = (a, b) => {
+      if (a == null && b == null) return 'N/A'
+      if (a != null && b == null) return `${Math.ceil(a / 12)}+ years`
+      const yearsA = Math.ceil((a || 0) / 12)
+      const yearsB = Math.ceil((b || 0) / 12)
+      return yearsA === yearsB ? `${yearsA} years` : `${yearsA}-${yearsB} years`
+    }
+
+    return {
+      minDealers,
+      maxDealers,
+      annualRevenueMin,
+      annualRevenueMax,
+      investMin,
+      investMax,
+      timelineLabel: formatMonthsRange(monthsToMin, monthsToMax)
+    }
+  }
+
+  const conservative = makeScenarioRange(5, 10)
+  const moderate = makeScenarioRange(15, 20)
+  const aggressive = makeScenarioRange(25, 35)
+
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>Market Penetration Scenarios</CardTitle>
-          <CardDescription>Revenue projections across different market share scenarios</CardDescription>
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={400}>
@@ -16,13 +74,19 @@ const GrowthScenariosTab = ({ penetrationScenarios }) => {
               <XAxis dataKey="penetration" />
               <YAxis />
               <Tooltip 
-                formatter={(value, name) => [
-                  name === 'revenue' ? `$${value}M` : value.toLocaleString(),
-                  name === 'revenue' ? 'Annual Revenue' : 'Dealerships'
-                ]} 
+                content={({ active, payload, label }) => {
+                  if (!active || !payload || payload.length === 0) return null
+                  const row = payload[0]?.payload || {}
+                  return (
+                    <div className="bg-background border rounded px-3 py-2 text-sm">
+                      <div className="font-medium mb-1">{label}</div>
+                      <div>Dealerships: {Number(row.dealerships || 0).toLocaleString()}</div>
+                      <div>Annual Revenue: ${Number(row.revenue || 0)}M</div>
+                    </div>
+                  )
+                }}
               />
-              <Bar dataKey="revenue" fill="#8884d8" name="revenue" />
-              <Bar dataKey="dealerships" fill="#82ca9d" name="dealerships" />
+              <Bar dataKey="dealerships" fill="#82ca9d" name="dealerships" barSize={56} />
             </BarChart>
           </ResponsiveContainer>
         </CardContent>
@@ -35,10 +99,10 @@ const GrowthScenariosTab = ({ penetrationScenarios }) => {
             <CardDescription>Early market entry scenario</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            <div className="text-2xl font-bold">$25-50M</div>
+            <div className="text-2xl font-bold">{`${Math.round(conservative.annualRevenueMin / 1e6)}-${Math.round(conservative.annualRevenueMax / 1e6)}M`}</div>
             <p className="text-sm text-muted-foreground">Annual revenue range</p>
             <div className="text-sm">
-              <div>• 190-380 dealerships</div>
+              <div>• {conservative.minDealers.toLocaleString()}-{conservative.maxDealers.toLocaleString()} dealerships</div>
               <div>• Focus on early adopters</div>
               <div>• Prove product-market fit</div>
               <div>• Build case studies</div>
@@ -52,10 +116,10 @@ const GrowthScenariosTab = ({ penetrationScenarios }) => {
             <CardDescription>Market leadership scenario</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            <div className="text-2xl font-bold">$75-100M</div>
+            <div className="text-2xl font-bold">{`${Math.round(moderate.annualRevenueMin / 1e6)}-${Math.round(moderate.annualRevenueMax / 1e6)}M`}</div>
             <p className="text-sm text-muted-foreground">Annual revenue range</p>
             <div className="text-sm">
-              <div>• 570-760 dealerships</div>
+              <div>• {moderate.minDealers.toLocaleString()}-{moderate.maxDealers.toLocaleString()} dealerships</div>
               <div>• Market leadership position</div>
               <div>• Competitive differentiation</div>
               <div>• Strategic partnerships</div>
@@ -69,10 +133,10 @@ const GrowthScenariosTab = ({ penetrationScenarios }) => {
             <CardDescription>Market dominance scenario</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            <div className="text-2xl font-bold">$125-175M</div>
+            <div className="text-2xl font-bold">{`${Math.round(aggressive.annualRevenueMin / 1e6)}-${Math.round(aggressive.annualRevenueMax / 1e6)}M`}</div>
             <p className="text-sm text-muted-foreground">Annual revenue range</p>
             <div className="text-sm">
-              <div>• 950-1,335 dealerships</div>
+              <div>• {aggressive.minDealers.toLocaleString()}-{aggressive.maxDealers.toLocaleString()} dealerships</div>
               <div>• Market dominance</div>
               <div>• Platform ecosystem</div>
               <div>• Acquisition opportunities</div>
@@ -95,7 +159,7 @@ const GrowthScenariosTab = ({ penetrationScenarios }) => {
                   <th className="border border-gray-300 p-2 text-left">Market Share</th>
                   <th className="border border-gray-300 p-2 text-left">Customers</th>
                   <th className="border border-gray-300 p-2 text-left">Annual Revenue</th>
-                  <th className="border border-gray-300 p-2 text-left">Investment Required</th>
+                  <th className="border border-gray-300 p-2 text-left">Investment Required (CAC)</th>
                   <th className="border border-gray-300 p-2 text-left">Timeline</th>
                 </tr>
               </thead>
@@ -103,26 +167,26 @@ const GrowthScenariosTab = ({ penetrationScenarios }) => {
                 <tr>
                   <td className="border border-gray-300 p-2">Conservative</td>
                   <td className="border border-gray-300 p-2">5-10%</td>
-                  <td className="border border-gray-300 p-2">190-380</td>
-                  <td className="border border-gray-300 p-2">$25-50M</td>
-                  <td className="border border-gray-300 p-2">$30-50M</td>
-                  <td className="border border-gray-300 p-2">3-5 years</td>
+                  <td className="border border-gray-300 p-2">{conservative.minDealers.toLocaleString()}-{conservative.maxDealers.toLocaleString()}</td>
+                  <td className="border border-gray-300 p-2">{`${formatCurrency(conservative.annualRevenueMin)} - ${formatCurrency(conservative.annualRevenueMax)}`}</td>
+                  <td className="border border-gray-300 p-2">{`${formatCurrency(conservative.investMin)} - ${formatCurrency(conservative.investMax)}`}</td>
+                  <td className="border border-gray-300 p-2">{conservative.timelineLabel}</td>
                 </tr>
                 <tr>
                   <td className="border border-gray-300 p-2">Moderate</td>
                   <td className="border border-gray-300 p-2">15-20%</td>
-                  <td className="border border-gray-300 p-2">570-760</td>
-                  <td className="border border-gray-300 p-2">$75-100M</td>
-                  <td className="border border-gray-300 p-2">$80-120M</td>
-                  <td className="border border-gray-300 p-2">5-7 years</td>
+                  <td className="border border-gray-300 p-2">{moderate.minDealers.toLocaleString()}-{moderate.maxDealers.toLocaleString()}</td>
+                  <td className="border border-gray-300 p-2">{`${formatCurrency(moderate.annualRevenueMin)} - ${formatCurrency(moderate.annualRevenueMax)}`}</td>
+                  <td className="border border-gray-300 p-2">{`${formatCurrency(moderate.investMin)} - ${formatCurrency(moderate.investMax)}`}</td>
+                  <td className="border border-gray-300 p-2">{moderate.timelineLabel}</td>
                 </tr>
                 <tr>
                   <td className="border border-gray-300 p-2">Aggressive</td>
                   <td className="border border-gray-300 p-2">25-35%</td>
-                  <td className="border border-gray-300 p-2">950-1,335</td>
-                  <td className="border border-gray-300 p-2">$125-175M</td>
-                  <td className="border border-gray-300 p-2">$150-250M</td>
-                  <td className="border border-gray-300 p-2">7-10 years</td>
+                  <td className="border border-gray-300 p-2">{aggressive.minDealers.toLocaleString()}-{aggressive.maxDealers.toLocaleString()}</td>
+                  <td className="border border-gray-300 p-2">{`${formatCurrency(aggressive.annualRevenueMin)} - ${formatCurrency(aggressive.annualRevenueMax)}`}</td>
+                  <td className="border border-gray-300 p-2">{`${formatCurrency(aggressive.investMin)} - ${formatCurrency(aggressive.investMax)}`}</td>
+                  <td className="border border-gray-300 p-2">{aggressive.timelineLabel}</td>
                 </tr>
               </tbody>
             </table>

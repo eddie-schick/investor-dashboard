@@ -13,7 +13,9 @@ export const getMonthlyValue = (assumptions, key, monthIndex) => {
   const rampCfg = assumptions.ramps?.[key]
   if (rampCfg?.enabled && typeof rampCfg.monthlyPercent === 'number') {
     const pct = rampCfg.monthlyPercent / 100
-    const factor = Math.pow(1 + pct, monthIndex)
+    const startMonth = typeof rampCfg.startMonth === 'number' ? rampCfg.startMonth : 0
+    const elapsed = Math.max(0, monthIndex - startMonth)
+    const factor = Math.pow(1 + pct, elapsed)
     return typeof baseValue === 'number' ? baseValue * factor : baseValue
   }
   return baseValue
