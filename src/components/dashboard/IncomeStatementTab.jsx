@@ -329,6 +329,9 @@ const IncomeStatementTab = ({
     const feeRate = getMonthlyValue(assumptions, 'transactionFeeRate', index) || 0
     const s = seasonalFactorForMonth(month0)
     const tpcMonthly = (tpcYear / 12) * s
+    const monthlySales = tpcMonthly
+    const volume = customers * monthlySales
+    const feePerSale = avgPrice * (feeRate / 100)
     return (
       <HoverCard>
         <HoverCardTrigger className="cursor-help">{formatCurrency(value)}</HoverCardTrigger>
@@ -336,9 +339,10 @@ const IncomeStatementTab = ({
           <div className="space-y-1">
             <div className="font-medium">Transactional revenue — {label}</div>
             <div className="text-sm text-muted-foreground">Formula</div>
-            <div className="text-sm">customers × monthly transactions × avg price × fee rate</div>
-            <div className="text-sm">{customers.toLocaleString()} × {tpcMonthly.toFixed(2)} × {formatCurrency(avgPrice)} × {formatPercent(feeRate)} = {formatCurrency(value)}</div>
-            <div className="text-xs text-muted-foreground">Assumptions: {tpcYear}/yr, seasonal factor {s.toFixed(2)}</div>
+            <div className="text-sm">Volume × Transaction fee</div>
+            <div className="text-sm">Volume: {volume.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+            <div className="text-sm">Transaction fee: {formatCurrency(feePerSale)}</div>
+            <div className="text-sm">Result: {volume.toLocaleString(undefined, { maximumFractionDigits: 2 })} × {formatCurrency(feePerSale)} = {formatCurrency(value)}</div>
           </div>
         </HoverCardContent>
       </HoverCard>
@@ -546,6 +550,9 @@ const IncomeStatementTab = ({
               </div>
             ) : (
               <div className="overflow-x-auto">
+                {view === 'yearly' && (
+                  <div className="mb-2 text-xs text-muted-foreground">Note: 2025 covers Aug–Dec only.</div>
+                )}
                 <div className="relative overflow-y-auto max-h-[60vh]">
                   <Table className="w-full" container={false}>
                     <TableHeader className="sticky top-0 z-10 bg-background">
