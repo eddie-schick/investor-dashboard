@@ -4,7 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { formatCurrency, formatCurrencyCompact } from '@/utils/formatters'
+import { formatCurrency, formatCurrencyCompact, formatNumber, formatCurrencyOneDecimal } from '@/utils/formatters'
 import { getMonthlyValue, computeActiveCustomersWithOnboarding } from '@/utils/ramping'
 import { HoverCard, HoverCardTrigger, HoverCardContent } from '@/components/ui/hover-card'
 
@@ -475,11 +475,12 @@ const IncomeStatementTab = ({
           <CardTitle>Income Statement</CardTitle>
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <Tabs value={view} onValueChange={handleViewChange}>
-              <TabsList className="grid grid-cols-4">
-                <TabsTrigger value="monthly">Monthly</TabsTrigger>
-                <TabsTrigger value="quarterly">Quarterly</TabsTrigger>
-                <TabsTrigger value="yearly">Yearly</TabsTrigger>
-                <TabsTrigger value="expenses">Expense Breakdown</TabsTrigger>
+              <TabsList className="flex flex-wrap gap-2 overflow-x-auto">
+                <TabsTrigger className="whitespace-nowrap" value="monthly">Monthly</TabsTrigger>
+                <TabsTrigger className="whitespace-nowrap" value="quarterly">Quarterly</TabsTrigger>
+                <TabsTrigger className="whitespace-nowrap" value="yearly">Yearly</TabsTrigger>
+                <TabsTrigger className="whitespace-nowrap" value="revenue">Revenue Assumptions</TabsTrigger>
+                <TabsTrigger className="whitespace-nowrap" value="expenses">Expense Breakdown</TabsTrigger>
               </TabsList>
             </Tabs>
            <div className="flex flex-wrap gap-3 items-end">
@@ -548,6 +549,53 @@ const IncomeStatementTab = ({
                   </TableBody>
                 </Table>
               </div>
+            ) : view === 'revenue' ? (
+              <div className="relative overflow-y-auto max-h-[60vh]">
+                <Table container={false}>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-center sticky top-0 z-10 bg-background">Month</TableHead>
+                      <TableHead className="text-center sticky top-0 z-10 bg-background">Monthly Dealers</TableHead>
+                      <TableHead className="text-center sticky top-0 z-10 bg-background">Cumulative Dealers</TableHead>
+                      <TableHead className="text-center sticky top-0 z-10 bg-background">Subscription Price</TableHead>
+                      <TableHead className="text-center sticky top-0 z-10 bg-background">Transaction Volume</TableHead>
+                      <TableHead className="text-center sticky top-0 z-10 bg-background">Transaction Fee</TableHead>
+                      <TableHead className="text-center sticky top-0 z-10 bg-background">Implementations</TableHead>
+                      <TableHead className="text-center sticky top-0 z-10 bg-background">Implementation Fee</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {incomeData.map((data, index) => {
+                      const monthlyDealers = assumptions.useOnboardingPlan ? (assumptions.onboardingPlan?.[index] ?? 0) : 0
+                      const cumulativeDealers = computeCustomersForMonth(index)
+                      const saas = getMonthlyValue(assumptions, 'saasBasePricing', index) || 0
+                      const website = getMonthlyValue(assumptions, 'dealerWebsiteCost', index) || 0
+                      const subscriptionPrice = saas + website
+                      const tpcYear = getMonthlyValue(assumptions, 'transactionsPerCustomer', index) || 168
+                      const s = seasonalFactorForMonth(data.period.month)
+                      const tpcMonthly = (tpcYear / 12) * s
+                      const transactionVolume = Math.round(cumulativeDealers * tpcMonthly)
+                      const avgPrice = getMonthlyValue(assumptions, 'avgTransactionPrice', index) || 158993
+                      const feeRate = getMonthlyValue(assumptions, 'transactionFeeRate', index) || 0
+                      const transactionFeePer = avgPrice * (feeRate / 100)
+                      const implementations = assumptions.implementationPlan?.[index] ?? 0
+                      const implementationFee = assumptions.implementationPrice || 500000
+                      return (
+                        <TableRow key={index}>
+                          <TableCell className="text-center">{data.period.label}</TableCell>
+                          <TableCell className="text-center">{formatNumber(monthlyDealers)}</TableCell>
+                          <TableCell className="text-center">{formatNumber(cumulativeDealers)}</TableCell>
+                          <TableCell className="text-center">{formatCurrencyOneDecimal(subscriptionPrice)}</TableCell>
+                          <TableCell className="text-center">{formatNumber(transactionVolume)}</TableCell>
+                          <TableCell className="text-center">{formatCurrency(transactionFeePer)}</TableCell>
+                          <TableCell className="text-center">{formatNumber(implementations)}</TableCell>
+                          <TableCell className="text-center">{formatCurrency(implementationFee)}</TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 {view === 'yearly' && (
@@ -567,6 +615,7 @@ const IncomeStatementTab = ({
                         <TableHead className="text-center sticky top-0 bg-background">Net Income</TableHead>
                         <TableHead className="text-center sticky top-0 bg-background">Investment</TableHead>
                         <TableHead className="text-center sticky top-0 bg-background">Cash Balance</TableHead>
+                        
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -687,6 +736,7 @@ const IncomeStatementTab = ({
                               data.cumulativeCashBalance < 0 ? formatCurrencyCompact(data.cumulativeCashBalance) : formatCurrency(data.cumulativeCashBalance)
                             )}
                           </TableCell>
+                          
                         </TableRow>
                       ))}
                     </TableBody>

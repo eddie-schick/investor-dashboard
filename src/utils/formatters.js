@@ -28,3 +28,12 @@ export const formatCurrencyCompact = (value) => {
 }
 
 
+// Currency with one decimal for k/m/b units, e.g., $1.5k, $2.3m, $1.0b
+export const formatCurrencyOneDecimal = (value) => {
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`
+  if (value >= 1e3) return `$${(value / 1e3).toFixed(1)}K`
+  return `$${value.toFixed(0)}`
+}
+
+
